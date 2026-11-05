@@ -18,6 +18,12 @@ try:
 except ImportError:
     HAVE_PIL = False
 
+try:
+    import numpy  # noqa: F401
+    HAVE_NUMPY = True
+except ImportError:
+    HAVE_NUMPY = False
+
 
 class ParserTests(unittest.TestCase):
     def test_defaults(self):
@@ -84,6 +90,36 @@ class IndicatorTests(unittest.TestCase):
     def test_default_log_path(self):
         self.assertTrue(va.default_log_path().endswith(os.path.join("voice-anywhere", "voice-anywhere.log")))
 
+    @unittest.skipUnless(HAVE_NUMPY, "numpy not installed")
+    def test_make_chime(self):
+        c = va.make_chime((660, 990), volume=0.4, lead=0.1)
+        self.assertEqual(c.dtype.name, "float32")
+        self.assertGreater(len(c), int(0.1 * va.CHIME_RATE) + int(0.15 * va.CHIME_RATE))
+        self.assertLessEqual(float(abs(c).max()), 0.4 + 1e-6)
+        self.assertEqual(float(abs(c[: int(0.1 * va.CHIME_RATE)]).max()), 0.0, "lead-in should be silent")
+        self.assertEqual(float(abs(va.make_chime((660,), volume=0.0)).max()), 0.0)
+
+    def test_overlay_position(self):
+        import overlay
+        self.assertEqual(overlay.bottom_centre(200, 100, (0, 0, 1920, 1040), 40), (860, 900))
+        self.assertEqual(overlay.bottom_centre(200, 100, (1920, 0, 3840, 1040), 40), (2780, 900))
+
+    @unittest.skipUnless(HAVE_PIL and HAVE_NUMPY, "Pillow/numpy not installed")
+    def test_premultiplied_bgra(self):
+        from PIL import Image
+        import overlay
+        img = Image.new("RGBA", (2, 1))
+        img.putpixel((0, 0), (200, 100, 50, 255))
+        img.putpixel((1, 0), (200, 100, 50, 128))
+        b = overlay.to_premultiplied_bgra(img)
+        self.assertEqual(tuple(b[0:4]), (50, 100, 200, 255))
+        self.assertEqual(tuple(b[4:8]), (25, 50, 100, 128))
+
+    def test_overlay_option(self):
+        a = va.build_parser().parse_args(["--overlay", "cursor", "--overlay-size", "300", "--chime-volume", "0.5"])
+        self.assertEqual((a.overlay, a.overlay_size, a.chime_volume), ("cursor", 300, 0.5))
+        self.assertEqual(va.build_parser().parse_args([]).overlay, "bottom")
+
     @unittest.skipUnless(HAVE_PIL, "Pillow not installed")
     def test_knot_frames(self):
         import trinity_icon as ti
@@ -93,10 +129,13 @@ class IndicatorTests(unittest.TestCase):
         loud = fr.image("speaking", 0, 1.0)
         self.assertEqual(idle.size, (32, 32))
         self.assertEqual(idle.mode, "RGBA")
-        alpha = lambda im: sum(im.getchannel("A").getdata())
+        alpha = lambda im: sum(im.getchannel("A").tobytes())
+        def brightness(im):
+            b = im.tobytes()
+            return sum((b[i] + b[i + 1] + b[i + 2]) * b[i + 3] for i in range(0, len(b), 4))
         self.assertGreater(alpha(loud), alpha(quiet), "louder speech should glow more")
-        brightness = lambda im: sum(sum(px[:3]) * px[3] for px in im.getdata())
-        self.assertGreater(brightness(quiet), brightness(idle), "speaking should be brighter than idle")
+        self.assertGreater(brightness(loud), brightness(idle), "speaking should be brighter than idle")
+        self.assertGreater(brightness(loud), brightness(quiet), "colours should dim in silence")
         r, g, b, a = fr.image("paused").convert("RGBA").getpixel((16, 16))
         self.assertTrue(a == 0 or (abs(r - g) < 3 and abs(g - b) < 3), "paused should be grey")
 

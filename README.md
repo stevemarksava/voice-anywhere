@@ -39,7 +39,7 @@ cd voice-anywhere\plugins\voice-anywhere\skills\voice-anywhere
 powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Startup -SelfTest
 ```
 
-That's it. It's now **always on**: it runs hidden in the background (no window), starts by itself every time you sign in, and you never have to think about it. A double beep tells you it's ready.
+That's it. It's now **always on**: it runs hidden in the background (no window), starts by itself every time you sign in, and you never have to think about it. When it's ready, the Trinity knot glows briefly at the bottom of your screen.
 
 The installer sets up a private Python environment in `%LOCALAPPDATA%\voice-anywhere` and runs a self-test that needs no microphone. The test makes the Windows voice say a sentence, transcribes it and should print `SELF-TEST PASSED`. The speech model (about 145 MB) downloads once, on first run.
 
@@ -85,7 +85,13 @@ copilot plugin install voice-anywhere@voice-anywhere
 
 ![Tray icon states: dim when on, glowing while you speak, steady glow while transcribing, grey when paused](docs/tray-states.png)
 
-A Trinity knot sits in the taskbar's notification area:
+**While you talk,** a large Trinity knot floats at the bottom-centre of your screen, above the taskbar.
+
+![The big Trinity knot glowing above the taskbar while you speak](docs/overlay-speaking.png)
+
+It glows and pulses with your voice, and its colours dim when you go quiet. It disappears once your text is pasted. Clicks pass straight through it, and it never takes focus, so the app you're typing in stays active. You also hear a soft rising chime the moment the microphone is live (the cue to start speaking), and a falling chime when you let go.
+
+**The rest of the time,** a small knot sits in the taskbar's notification area:
 
 | Knot | Meaning |
 |---|---|
@@ -102,7 +108,7 @@ Start **Voice Anywhere** if it isn't already running (with `-Startup` it always 
 
 | Do this | What happens |
 |---|---|
-| Click into any text box, **hold Right Ctrl**, speak, release | Text is pasted at the cursor and also left on the clipboard. Beeps mark start and stop. |
+| Click into any text box, **hold Right Ctrl**, wait for the chime, speak, release | Text is pasted at the cursor and also left on the clipboard. |
 | Select text, press **Ctrl + Alt + R** | It's read aloud. Markdown and links are tidied up first. |
 | **Ctrl + Alt + S** | Stop reading |
 | **Ctrl + Alt + Q** | Quit |
@@ -126,7 +132,10 @@ Tips:
 --type               type key by key instead of pasting
 --restore-clipboard  put your previous clipboard back after pasting
 --auto-send          press Enter after pasting
---no-read, --no-beep turn off read-aloud or beeps
+--no-read, --no-beep turn off read-aloud or chimes
+--chime-volume 0..1  chime loudness (default 0.35)
+--overlay MODE       big knot while talking: bottom (default) | cursor | off
+--overlay-size PX    size of the big knot (default 260)
 --no-tray            no Trinity-knot tray icon
 --read-key / --stop-key / --quit-key   change the other hotkeys
 --list-mics          list microphones
@@ -164,6 +173,7 @@ Speed was measured on a 24-thread laptop CPU, transcribing a 7-second sentence w
 | Slow | Use `--model base` or `tiny`, and try `--threads 4` or `8`. |
 | Wrong words | Use `--model small`, `--language en`, `--vocab "..."` and a headset mic. |
 | Silence | Check `--list-mics` and Windows *Settings > Privacy > Microphone > Let desktop apps access your microphone*. |
+| The chime comes late or not at all on a Bluetooth headset | Bluetooth headsets switch into a hands-free mode when the mic opens, which takes about half a second to a second. The chime plays only once the mic is really delivering audio, so wait for it before speaking. If you never hear it, watch the big knot instead (it brightens as soon as it hears you), or try `--chime-volume 0.6`. |
 | Is it running? | Look for the Trinity knot in the taskbar (dim = on). If it's not there, check under the **^** arrow and the log at `%LOCALAPPDATA%\voice-anywhere\voice-anywhere.log`, or start it from the desktop shortcut to watch it. |
 | "Already running" | It's on in the background. Press Ctrl+Alt+Q to stop that copy first. |
 

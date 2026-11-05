@@ -101,12 +101,14 @@ def _pose(time, W, scale, thick=1.0):
     return pts
 
 
-def render(size=64, time=0.0, ss=4, thick=2.6):
-    """Return (knot, glow) RGBA images of the knot at `time`, both `size` px square."""
+def render(size=64, time=0.0, ss=4, thick=2.6, margin=1.0):
+    """Return (knot, glow) RGBA images of the knot at `time`, both `size` px square.
+    `thick` scales strand width (thicker reads better at tray size); `margin` > 1 shrinks the
+    knot inside the canvas to leave room for a big glow."""
     from PIL import Image, ImageDraw, ImageFilter
 
     W = size * ss
-    scale = W / 2 / 2.4
+    scale = W / 2 / (2.4 * margin)
     pts = _pose(time, W, scale, thick)
 
     # Glow: thick soft strokes per arc, blurred.
@@ -180,15 +182,16 @@ def _dim(img, brightness, saturation=1.0):
 class KnotFrames:
     """Pre-rendered animation frames; image() composes a frame cheaply at runtime."""
 
-    def __init__(self, size=64, n_frames=12):
+    def __init__(self, size=64, n_frames=12, thick=2.6, margin=1.0, ss=4):
         from PIL import Image
         self.size = size
         self.n = n_frames
-        self.knots, self.glows = [], []
+        self.knots, self.glows, self.dims = [], [], []
         for f in range(n_frames):
-            k, g = render(size, time=f * (TAU / 1.6) / n_frames)  # one twinkle cycle
+            k, g = render(size, time=f * (TAU / 1.6) / n_frames, ss=ss, thick=thick, margin=margin)
             self.knots.append(k)
             self.glows.append(g)
+            self.dims.append(_dim(k, 0.65, 0.8))
         still_k, still_g = self.knots[0], self.glows[0]
         self.idle = _dim(still_k, 0.9, 0.85)
         self.paused = _dim(still_k, 0.6, 0.0)
@@ -202,12 +205,14 @@ class KnotFrames:
         if state in ("paused", "loading"):
             return self.paused
         i = frame % self.n
+        level = max(0.0, min(1.0, level))
         if state == "transcribing":
-            glow_k = 0.7
-        else:  # speaking/recording: glow tracks the voice
-            glow_k = 0.35 + 1.4 * max(0.0, min(1.0, level))
+            glow_k, knot = 0.7, self.knots[i]
+        else:  # speaking/recording: colours dim in silence and blaze with the voice
+            glow_k = 0.25 + 1.6 * level
+            knot = Image.blend(self.dims[i], self.knots[i], min(1.0, 0.25 + 1.2 * level))
         base = Image.alpha_composite(self._blank, _scale_alpha(self.glows[i], glow_k))
-        return Image.alpha_composite(base, self.knots[i])
+        return Image.alpha_composite(base, knot)
 
 
 def write_ico(path, png_path=None):

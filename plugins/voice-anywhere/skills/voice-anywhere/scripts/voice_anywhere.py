@@ -58,7 +58,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help="put your previous clipboard back after pasting (default: transcript stays on clipboard)")
     p.add_argument("--auto-send", action="store_true",
                    help="press Enter after pasting (sends chat messages immediately; off by default)")
-    p.add_argument("--no-beep", action="store_true", help="no start/stop beeps")
+    p.add_argument("--no-beep", action="store_true", help="no start/stop chimes")
+    p.add_argument("--chime-volume", type=float, default=0.35, help="chime loudness 0..1 (default: 0.35)")
+    p.add_argument("--overlay", default="bottom", choices=["bottom", "cursor", "off"],
+                   help="big glowing knot while you talk: bottom-centre of the screen (default), "
+                        "next to the mouse pointer, or off")
+    p.add_argument("--overlay-size", type=int, default=260, help="size of the big knot in pixels (default: 260)")
     p.add_argument("--read-key", default="ctrl+alt+r", help="read selected text aloud (default: ctrl+alt+r)")
     p.add_argument("--stop-key", default="ctrl+alt+s", help="stop reading aloud (default: ctrl+alt+s)")
     p.add_argument("--quit-key", default="ctrl+alt+q", help="quit (default: ctrl+alt+q)")
@@ -66,7 +71,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-tray", action="store_true", help="no system-tray icon")
     p.add_argument("--background", action="store_true",
                    help="always-on mode for sign-in: no window needed, log to file, one instance only, "
-                        "restart automatically after errors, double beep when ready")
+                        "restart automatically after errors; the knot appears briefly when ready")
     p.add_argument("--log", default=None,
                    help="log file (default in --background: %%LOCALAPPDATA%%\\voice-anywhere\\voice-anywhere.log)")
     p.add_argument("--list-mics", action="store_true", help="list microphones and exit")
@@ -121,25 +126,54 @@ def voice_level(rms: float) -> float:
     return max(0.0, min(1.0, (db + 50) / 35))
 
 
-class Tray:
-    """Trinity-knot system-tray indicator: dim when on, glows with your voice while you talk.
-    Silently does nothing if pystray or Pillow is unavailable."""
+CHIME_RATE = 48000
 
-    FPS = 12
+
+def make_chime(freqs, volume=0.35, note=0.09, gap=0.03, lead=0.15, rate=CHIME_RATE):
+    """A soft bell-like run of notes as float32 samples. `lead` is silence up front so
+    Bluetooth headsets that wake their audio link on demand don't swallow the start."""
+    import numpy as np
+    parts = [np.zeros(int(lead * rate), dtype=np.float32)]
+    for f in freqs:
+        t = np.arange(int(note * rate)) / rate
+        env = np.minimum(1.0, t / 0.006) * np.exp(-t * 22)
+        tone = np.sin(2 * np.pi * f * t) + 0.25 * np.sin(4 * np.pi * f * t)
+        parts += [(volume / 1.25 * env * tone).astype(np.float32), np.zeros(int(gap * rate), dtype=np.float32)]
+    return np.concatenate(parts)
+
+
+class Tray:
+    """Trinity-knot indicators: a small tray icon (dim when on) and a large floating knot that
+    appears while you talk and glows with your voice. Each part silently switches itself off if
+    its dependencies are unavailable."""
+
+    FPS = 20
 
     def __init__(self, app):
         self.app = app
         self.icon = None
         self.frames = None
+        self.big = None
+        self.overlay = None
         self.state = "loading"
         self.level = 0.0
         self._anim = None
 
     def start(self):
         try:
-            import pystray
             sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
             from trinity_icon import KnotFrames
+        except ImportError as e:
+            print(f"(no indicators: {e})", flush=True)
+            return
+        if not self.app.args.no_tray:
+            self._start_icon(KnotFrames)
+        if self.app.args.overlay != "off":
+            threading.Thread(target=self._start_overlay, args=(KnotFrames,), daemon=True).start()
+
+    def _start_icon(self, KnotFrames):
+        try:
+            import pystray
         except ImportError as e:
             print(f"(no tray icon: {e})", flush=True)
             return
@@ -157,6 +191,35 @@ class Tray:
                                  tray_tooltip("loading", self.app.args.key), menu)
         self.icon.run_detached()
         threading.Thread(target=self._promote, daemon=True).start()
+
+    def _start_overlay(self, KnotFrames):
+        try:
+            from overlay import Overlay
+            import ctypes
+            scale = ctypes.windll.user32.GetDpiForSystem() / 96
+            size = int(self.app.args.overlay_size * scale)
+            self.big = KnotFrames(size, n_frames=16, thick=1.6, margin=1.45, ss=2)
+            ov = Overlay(position=self.app.args.overlay)
+            if not ov.start():
+                return
+            self.overlay = ov
+            self._hello()
+        except Exception as e:
+            print(f"(no overlay: {e})", flush=True)
+
+    def _hello(self):
+        """Brief appearance at start-up so you know it's on (e.g. after signing in)."""
+        if self.state not in ("ready", "loading"):
+            return
+        import math
+        n = int(self.FPS * 1.8)
+        for f in range(n):
+            if self.state not in ("ready", "loading"):
+                return
+            self.overlay.show(self.big.image("speaking", f, math.sin(math.pi * f / n)))
+            time.sleep(1 / self.FPS)
+        if self.state in ("ready", "loading"):
+            self.overlay.hide()
 
     @staticmethod
     def _promote():
@@ -184,35 +247,43 @@ class Tray:
 
     def set(self, state):
         self.state = state
-        if not self.icon:
-            return
         try:
-            self.icon.title = tray_tooltip(state, self.app.args.key)
+            if self.icon:
+                self.icon.title = tray_tooltip(state, self.app.args.key)
             if state in ("recording", "transcribing"):
-                if not (self._anim and self._anim.is_alive()):
+                if (self.icon or self.overlay) and not (self._anim and self._anim.is_alive()):
                     self._anim = threading.Thread(target=self._animate, daemon=True)
                     self._anim.start()
             else:
-                self.icon.icon = self.frames.image(state)
+                if self.icon:
+                    self.icon.icon = self.frames.image(state)
+                if self.overlay:
+                    self.overlay.hide()
         except Exception:
             pass
 
     def _animate(self):
         frame, shown = 0, 0.0
-        while self.state in ("recording", "transcribing") and self.icon:
+        while self.state in ("recording", "transcribing"):
             if self.state == "recording":
                 shown += (self.level - shown) * (0.6 if self.level > shown else 0.25)  # fast attack, slow decay
-                img = self.frames.image("speaking", frame, shown)
+                kind = "speaking"
             else:
-                img = self.frames.image("transcribing", frame)
+                kind = "transcribing"
             try:
-                self.icon.icon = img
+                if self.icon and frame % 2 == 0:  # the tray doesn't need 20 fps
+                    self.icon.icon = self.frames.image(kind, frame // 2, shown)
+                if self.overlay:
+                    self.overlay.show(self.big.image(kind, frame, shown))
             except Exception:
-                return
+                pass
             frame += 1
             time.sleep(1 / self.FPS)
         try:
-            self.icon.icon = self.frames.image(self.state)
+            if self.icon:
+                self.icon.icon = self.frames.image(self.state)
+            if self.overlay:
+                self.overlay.hide()
         except Exception:
             pass
 
@@ -232,6 +303,8 @@ class Tray:
         self.app.quit_event.set()
 
     def stop(self):
+        if self.overlay:
+            self.overlay.stop()
         if self.icon:
             try:
                 self.icon.stop()
@@ -336,20 +409,22 @@ class App:
         self.paused = False
         self.quit_event = threading.Event()
         self.speech_q: "queue.Queue[str | None]" = queue.Queue()
-        self.tray = Tray(self) if not args.no_tray else None
+        self.tray = Tray(self) if not (args.no_tray and args.overlay == "off") else None
+        self.chimes = {"start": make_chime((660, 990), args.chime_volume, lead=0.06),
+                       "stop": make_chime((990, 660), args.chime_volume, lead=0.06)}
 
     def set_state(self, state):
         if self.tray:
             self.tray.set(state)
 
-    def beep(self, freq):
+    def chime(self, kind, blocking=False):
         if self.args.no_beep:
             return
         try:
-            import winsound
-            winsound.Beep(freq, 70)
-        except Exception:
-            pass
+            import sounddevice as sd
+            sd.play(self.chimes[kind], CHIME_RATE, blocking=blocking)
+        except Exception as e:
+            print(f"  (chime failed: {e})", flush=True)
 
     def record_while_held(self):
         import keyboard
@@ -357,14 +432,20 @@ class App:
         import sounddevice as sd
 
         chunks = []
+        live = threading.Event()
         def cb(indata, frames, t, status):
             chunks.append(indata.copy())
+            live.set()
             if self.tray:
                 self.tray.level = voice_level(float(np.sqrt(np.mean(indata ** 2))))
+        chimed = False
         with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype="float32",
                             device=resolve_mic(self.args.mic), callback=cb):
             while keyboard.is_pressed(self.args.key):
-                time.sleep(0.03)
+                if not chimed and live.is_set():
+                    self.chime("start")  # the mic is delivering audio: speak now
+                    chimed = True
+                time.sleep(0.02)
         return np.concatenate(chunks).flatten() if chunks else np.zeros(0, dtype="float32")
 
     def deliver(self, text):
@@ -389,12 +470,11 @@ class App:
             return
         try:
             self.set_state("recording")
-            self.beep(880)
             print("Listening... release to stop", flush=True)
             audio = self.record_while_held()
-            self.beep(440)
+            self.chime("stop")
             if len(audio) < SAMPLE_RATE * 0.4:
-                print("  Too short, ignored.", flush=True)
+                print(f"  Too short ({len(audio) / SAMPLE_RATE:.1f}s of audio), ignored.", flush=True)
                 return
             self.set_state("transcribing")
             t = time.time()
@@ -513,9 +593,6 @@ def run_background(args) -> int:
             if model is None:
                 model = load_model(args)
             app = App(args, model, log_path)
-            if not args.no_beep:
-                app.beep(660)
-                app.beep(990)  # double beep: ready
             app.run()
             return 0  # quit key pressed
         except Exception as e:

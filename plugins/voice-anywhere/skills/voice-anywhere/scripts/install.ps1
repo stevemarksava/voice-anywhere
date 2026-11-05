@@ -66,7 +66,7 @@ if ($LASTEXITCODE -ne 0) { throw "Dependency install failed. See the pip output 
 Get-CimInstance Win32_Process -Filter "Name='pythonw.exe' OR Name='python.exe'" |
     Where-Object { $_.CommandLine -match 'voice_anywhere\.py' } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }  # replace a running copy
-foreach ($f in "voice_anywhere.py", "trinity_icon.py", "voice-anywhere.ico") { Copy-Item (Join-Path $here $f) $home_ -Force }
+foreach ($f in "voice_anywhere.py", "trinity_icon.py", "overlay.py", "voice-anywhere.ico") { Copy-Item (Join-Path $here $f) $home_ -Force }
 $ico = Join-Path $home_ "voice-anywhere.ico"
 $launcher = Join-Path $home_ "Start Voice Anywhere.cmd"
 @(
@@ -115,7 +115,7 @@ if ($SelfTest) {
 Write-Host ""
 if ($Startup) {
     Start-Process -FilePath $pyw -ArgumentList $bgArgs -WorkingDirectory $home_ -WindowStyle Hidden
-    Write-Host "Voice Anywhere is now running in the background (listen for a double beep when it's ready)." -ForegroundColor Green
+    Write-Host "Voice Anywhere is now running in the background (the Trinity knot appears briefly when it's ready)." -ForegroundColor Green
     Write-Host "It will start by itself every time you sign in. Log: $(Join-Path $home_ 'voice-anywhere.log')"
 } else {
     Write-Host "Done. Start it with:" -ForegroundColor Green

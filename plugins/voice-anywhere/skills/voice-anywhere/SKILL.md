@@ -28,7 +28,7 @@ powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Startup -SelfTest
 
 This creates `%LOCALAPPDATA%\voice-anywhere\` with a private Python environment, the script and `Start Voice Anywhere.cmd`.
 
-- **`-Startup` (recommended)** makes it always on: it starts hidden with `pythonw --background` at every sign-in, and starts it immediately. Background mode runs a single instance, restarts itself after errors, logs to `%LOCALAPPDATA%\voice-anywhere\voice-anywhere.log` and double-beeps when ready.
+- **`-Startup` (recommended)** makes it always on: it starts hidden with `pythonw --background` at every sign-in, and starts it immediately. Background mode runs a single instance, restarts itself after errors, logs to `%LOCALAPPDATA%\voice-anywhere\voice-anywhere.log` and briefly shows the big knot when ready.
 - `-Shortcut` adds a desktop shortcut that runs it in a visible console.
 - `-Arguments '...'` bakes default options into both.
 - `-SelfTest` synthesises a sentence with the Windows voice, transcribes it and must print `SELF-TEST PASSED`.
@@ -37,12 +37,14 @@ To check it's running, look for `pythonw.exe` with `voice_anywhere.py` in its co
 
 ## Use
 
-**Indicator:** a Trinity knot in the taskbar notification area.
+**Indicators:**
 
-- **Dim colours:** on and waiting.
-- **Glowing and pulsing with the voice:** listening (brighter means louder).
-- **Steady glow:** transcribing.
-- **Grey:** paused or starting.
+- **While talking:** a large Trinity knot floats at the bottom-centre of the screen. It glows with the voice, dims in silence, is click-through and never takes focus. A rising chime plays once the mic is actually live (on Bluetooth headsets that's about 0.5–1 s after the key press), and a falling chime plays on release.
+- **The rest of the time:** a small knot sits in the taskbar notification area.
+  - **Dim colours:** on and waiting.
+  - **Glowing and pulsing with the voice:** listening (brighter means louder).
+  - **Steady glow:** transcribing.
+  - **Grey:** paused or starting.
 
 Right-click it to pause, toggle auto-send, open the log or quit. On Windows 11 it pins itself to the visible taskbar from the second start; otherwise it's under the **^** overflow arrow.
 
@@ -71,7 +73,9 @@ Pass them on the command line, or bake them in with `install.ps1 -Arguments '...
 | `--type` | An app blocks paste. |
 | `--restore-clipboard` | The user wants their old clipboard back after pasting. |
 | `--auto-send` | Hands-free chat: press Enter after pasting. |
-| `--no-read`, `--no-beep`, `--no-tray` | Turn off read-aloud, beeps or the tray knot. |
+| `--no-read`, `--no-beep`, `--no-tray` | Turn off read-aloud, chimes or the tray knot. |
+| `--overlay cursor` / `off`, `--overlay-size 320` | Move the big knot next to the mouse pointer, turn it off, or resize it. |
+| `--chime-volume 0.6` | The chime is too quiet. |
 
 ## Troubleshooting
 

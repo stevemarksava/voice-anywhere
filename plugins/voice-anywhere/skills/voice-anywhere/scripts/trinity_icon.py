@@ -101,12 +101,12 @@ def _pose(time, W, scale, thick=1.0):
     return pts
 
 
-def render(size=64, time=0.0, ss=4, thick=1.7):
+def render(size=64, time=0.0, ss=4, thick=2.6):
     """Return (knot, glow) RGBA images of the knot at `time`, both `size` px square."""
     from PIL import Image, ImageDraw, ImageFilter
 
     W = size * ss
-    scale = W / 2 / 2.55
+    scale = W / 2 / 2.4
     pts = _pose(time, W, scale, thick)
 
     # Glow: thick soft strokes per arc, blurred.
@@ -190,7 +190,7 @@ class KnotFrames:
             self.knots.append(k)
             self.glows.append(g)
         still_k, still_g = self.knots[0], self.glows[0]
-        self.idle = _dim(still_k, 0.75, 0.75)
+        self.idle = _dim(still_k, 0.9, 0.85)
         self.paused = _dim(still_k, 0.6, 0.0)
         self._blank = Image.new("RGBA", (size, size), (0, 0, 0, 0))
         self._still_glow = still_g

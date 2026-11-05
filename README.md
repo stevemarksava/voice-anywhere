@@ -2,6 +2,10 @@
 
 **Hold a key, speak, let go. Your words appear wherever your cursor is.**
 
+![Demo: hold Right Ctrl, the Trinity knot glows while you speak, and the text appears in the message box](docs/demo.gif)
+
+<sub>A real recording, not a mock-up: the knot glows with the voice, then the transcription is pasted (the talking part is sped up).</sub>
+
 Voice Anywhere is a small, free, private push-to-talk dictation tool for Windows. It works in any app: Teams, WhatsApp, Outlook, Word, a browser, VS Code, a terminal, or the chat box of an AI assistant such as GitHub Copilot, Claude or Microsoft Scout. Transcription runs **on your own machine**, so your voice never leaves it.
 
 It's also an [Agent Skill](https://agentskills.io): give it to Claude Code, GitHub Copilot or any agent that reads `SKILL.md`, and the agent can install, tune and troubleshoot it for you.

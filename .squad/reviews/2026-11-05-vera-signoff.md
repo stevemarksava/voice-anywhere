@@ -91,3 +91,33 @@ Result: DELTA PASS
 - Steve's instance untouched (PIDs 33816/11404 unchanged). Throwaway venv deleted. No commit and no push.
 
 Verdict: approved for push, covering the working copy as of this delta check.
+
+
+## Delta re-check (demo GIF + HVE Core skill)
+Date: 2026-11-05
+
+### A. voice-anywhere repo (docs/demo.gif + README caption): PASS
+- Uncommitted change is exactly `docs/demo.gif` (new) plus 4 README lines (image, caption, blanks). No other file changed.
+- Privacy: I sampled all 244 frames (every frame at 1 fps, and every 4th frame in a 64-tile sheet). Every one shows only the demo "Message" window, the dark backdrop with "Hold Right Ctrl and talk", the Trinity knot and the mouse pointer. No taskbar, toast, other app, name or address appears. Source capture was a 1000x640 region (stage.py), not the full desktop. The dictated text is the demo sentence only.
+- Caption truth: the GIF is 800x512, 12 fps, 244 frames, 20.33 s. That matches 5 s intro + 40 s at 8x (5 s) + 7.8 s normal + 2.5 s hold = 20.3 s. rec.mkv is 57.3 s and events.txt shows LISTEN at 7.0 s and PASTED at 53.1 s. In the GIF the knot glows during the sped-up part and the text lands about 3.3 s into the final normal-speed segment, which is consistent with a window taken from the end of the recording. "A real recording, not a mock-up... talking part is sped up" is accurate: it is a genuine gdigrab capture of the live app.
+- Size 987,323 bytes, under 1 MB (just: about 12 KB of headroom). The README relative link `docs/demo.gif` resolves. Alt text and caption match the content.
+- Info: Whisper misheard part of the demo sentence ("holy Trinity knot", "Mass pointer", "close in Flame and water"). It is honest, but visitors will see imperfect output. A cleaner take would look better. Not a defect.
+- Reminder: `docs/demo.gif` is untracked, so it must be committed together with the README change, or the image will be broken on GitHub.
+
+### B. HVE Core skill (local branch feat/experimental-voice-anywhere-skill, f679c63): PASS
+Checked against voice-anywhere 0.2.1 (0a5562e, which is also origin/main and tag v0.2.1 on the public repo):
+- Pinned source: full SHA 0a5562e7597a5c6c6b990a8e3a3a6890533aeead and tag v0.2.1 both exist on origin (`ls-remote` shows `v0.2.1^{}` = that SHA). `__version__ = "0.2.1"` at that commit. LICENSE says "Copyright (c) 2026 Avanade Inc.", matching the "MIT, Copyright Avanade Inc." claims.
+- Quick Start: `git show 0a5562e:.../scripts/install.ps1` works, and the commit contains `plugins/voice-anywhere/skills/voice-anywhere/scripts/{install.ps1, overlay.py, requirements.txt, trinity_icon.py, voice-anywhere.ico, voice_anywhere.py}`. clone, checkout, `cd plugins\voice-anywhere\skills\voice-anywhere`, then `install.ps1 -Startup -SelfTest` is a valid sequence (I also confirmed `-Arguments '--vocab "A, B"'` passes its inner quotes when typed in PowerShell).
+- Keys and options: Right Ctrl, Ctrl+Alt+R/S/Q, `--key/--model/--language/--vocab/--threads (1-64, half cores, max 8)/--device/--mic/--list-mics/--type/--auto-send/--restore-clipboard` all match the code and the README. "Under 0.4 s is ignored" matches `SAMPLE_RATE * 0.4`.
+- Behaviour: text pasted into the window focused at key-press and left on the clipboard; no Enter unless `--auto-send`; auto-send skipped in standalone terminals and not detectable in editor terminals; tray states dim/glow/steady/grey: all accurate.
+- Privacy: audio in memory only (self-test clip disclosed), local transcription, one-time HF download, logs lengths/timings only, one `IsPromoted` registry value removed by `-Uninstall`, shared model cache kept: all match the code and the earlier sign-off.
+- Installer switches (`-Startup`, `-SelfTest`, `-Arguments`, `-Uninstall`; re-run upgrades in place), the ~300 MB / 145 MB figures and Python 3.12+ match install.ps1, requirements.txt and the README.
+- issue.md and pr.md: factual claims agree with the SKILL.md. The commit touches 6 files (SKILL.md, two generated indexes, the new reference page, the vscode-playwright reflow, plugin.json), which matches the PR "Files changed" list. The working tree is clean and nothing was pushed.
+- Info (not blocking):
+  1. The Security bullet says the hook "acts only on the configured keys and never records or stores which keys are pressed". True, but the upstream README now adds that it also notices other key-downs while the talk key is held (to cancel shortcuts). Consider mirroring that sentence.
+  2. The PR draft says "87 skills" and describes generator output. I did not run the HVE Core generators or its lint/Pester checks, so that part is the author's claim.
+  3. The skill's "red-teamed and QA-signed-off" wording is true for 0.2.0 and the 0.2.1 packaging delta (see above).
+
+- Steve's instance untouched (PIDs 33816/11404 unchanged). No commits or pushes in either repo. Temp files in vera-rt deleted.
+
+Verdict: A PASS (approved to commit and push, with the GIF committed alongside the README). B PASS (content accurate and installable at the pinned commit).

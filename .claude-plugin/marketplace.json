@@ -1,0 +1,15 @@
+{
+  "name": "voice-anywhere",
+  "owner": {
+    "name": "Steve Marks (Avanade)"
+  },
+  "description": "Private, offline push-to-talk dictation for Windows that types wherever your cursor is.",
+  "plugins": [
+    {
+      "name": "voice-anywhere",
+      "source": "./plugins/voice-anywhere",
+      "description": "Hold a key, speak, release: your words are typed wherever the cursor is, in any app. Local faster-whisper transcription, read-aloud, always-on mode with a Trinity-knot tray indicator.",
+      "version": "0.1.0"
+    }
+  ]
+}

@@ -19,7 +19,7 @@ import tempfile
 import threading
 import time
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 SAMPLE_RATE = 16000
 
 
@@ -32,6 +32,18 @@ def default_threads() -> int:
     return max(1, min(8, (os.cpu_count() or 2) // 2))
 
 
+def _ranged(kind, lo, hi):
+    def parse(value):
+        try:
+            v = kind(value)
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"expected a number, got {value!r}")
+        if not lo <= v <= hi:
+            raise argparse.ArgumentTypeError(f"must be between {lo} and {hi}, got {v}")
+        return v
+    return parse
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="voice-anywhere",
@@ -39,15 +51,16 @@ def build_parser() -> argparse.ArgumentParser:
                     "Transcription runs locally; audio never leaves your machine.",
     )
     p.add_argument("--key", default="right ctrl",
-                   help="key to hold while talking (default: 'right ctrl'; e.g. 'f9', 'right alt', 'scroll lock')")
+                   help="key to hold while talking (default: 'right ctrl'; e.g. 'f9', 'right alt', 'scroll lock'). "
+                        "Matched exactly: 'right ctrl' does not react to the left Ctrl key")
     p.add_argument("--model", default="base",
                    help="Whisper model: tiny, base, small, medium, large-v3 (default: base; bigger = more accurate, slower)")
     p.add_argument("--language", default=None,
                    help="language code such as en, de, nl, fr (default: auto-detect)")
     p.add_argument("--vocab", default="",
                    help="names and jargon to help recognition, e.g. \"Avanade, Copilot, Fabric\"")
-    p.add_argument("--threads", type=int, default=default_threads(),
-                   help=f"CPU threads for transcription (default: {default_threads()} on this machine)")
+    p.add_argument("--threads", type=_ranged(int, 1, 64), default=default_threads(),
+                   help=f"CPU threads for transcription, 1-64 (default: {default_threads()} on this machine)")
     p.add_argument("--device", default="cpu", choices=["cpu", "cuda", "auto"],
                    help="cpu (default), or cuda if you have an NVIDIA GPU with CUDA libraries")
     p.add_argument("--mic", default=None,
@@ -57,13 +70,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--restore-clipboard", action="store_true",
                    help="put your previous clipboard back after pasting (default: transcript stays on clipboard)")
     p.add_argument("--auto-send", action="store_true",
-                   help="press Enter after pasting (sends chat messages immediately; off by default)")
+                   help="press Enter after pasting (sends chat messages immediately; off by default; "
+                        "never applied to terminal/console windows)")
     p.add_argument("--no-beep", action="store_true", help="no start/stop chimes")
-    p.add_argument("--chime-volume", type=float, default=0.35, help="chime loudness 0..1 (default: 0.35)")
+    p.add_argument("--chime-volume", type=_ranged(float, 0.0, 1.0), default=0.35,
+                   help="chime loudness 0..1 (default: 0.35)")
     p.add_argument("--overlay", default="bottom", choices=["bottom", "cursor", "off"],
                    help="big glowing knot while you talk: bottom-centre of the screen (default), "
                         "next to the mouse pointer, or off")
-    p.add_argument("--overlay-size", type=int, default=260, help="size of the big knot in pixels (default: 260)")
+    p.add_argument("--overlay-size", type=_ranged(int, 64, 1024), default=260,
+                   help="size of the big knot in pixels, 64-1024 (default: 260)")
     p.add_argument("--read-key", default="ctrl+alt+r", help="read selected text aloud (default: ctrl+alt+r)")
     p.add_argument("--stop-key", default="ctrl+alt+s", help="stop reading aloud (default: ctrl+alt+s)")
     p.add_argument("--quit-key", default="ctrl+alt+q", help="quit (default: ctrl+alt+q)")
@@ -73,7 +89,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="always-on mode for sign-in: no window needed, log to file, one instance only, "
                         "restart automatically after errors; the knot appears briefly when ready")
     p.add_argument("--log", default=None,
-                   help="log file (default in --background: %%LOCALAPPDATA%%\\voice-anywhere\\voice-anywhere.log)")
+                   help="log file (default in --background: %%LOCALAPPDATA%%\\voice-anywhere\\voice-anywhere.log). "
+                        "Logs never contain what you said, only lengths and timings")
     p.add_argument("--list-mics", action="store_true", help="list microphones and exit")
     p.add_argument("--self-test", action="store_true",
                    help="check the install without a microphone: synthesise a sentence, transcribe it, report speed")
@@ -88,8 +105,34 @@ def clean_for_speech(text: str) -> str:
     text = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", text)
     text = re.sub(r"https?://\S+", "link", text)
     text = re.sub(r"^\s*(?:[-*\u2022]|\d+\.)\s+", "", text, flags=re.M)
+    text = re.sub(r"(?<=[^\W_])_(?=[^\W_])", " ", text)  # snake_case -> "snake case", not "snakecase"
     text = re.sub(r"[`*_#>|~]", "", text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+def normalise_key(name: str) -> str:
+    return " ".join(str(name).lower().split())
+
+
+def key_matches(configured: str, event_name: str) -> bool:
+    """Exact key match. The keyboard library reports Left Ctrl as 'ctrl' and Right Ctrl as
+    'right ctrl' but gives both scan code 29, so its own is_pressed('right ctrl') is also True
+    for Left Ctrl. Comparing event names keeps the two apart."""
+    want, got = normalise_key(configured), normalise_key(event_name or "")
+    if not got:
+        return False
+    if want == got:
+        return True
+    return want.startswith("left ") and want[5:] == got  # 'left ctrl' is reported as plain 'ctrl'
+
+
+CONSOLE_CLASSES = {"ConsoleWindowClass", "CASCADIA_HOSTING_WINDOW_CLASS", "mintty", "VirtualConsoleClass",
+                   "PuTTY"}
+
+
+def is_console_class(class_name: str) -> bool:
+    """Windows classes of terminal hosts, where pressing Enter would run a command."""
+    return (class_name or "") in CONSOLE_CLASSES
 
 
 def join_segments(segments) -> str:
@@ -120,7 +163,7 @@ def tray_tooltip(state: str, key: str) -> str:
 def voice_level(rms: float) -> float:
     """Map microphone RMS (0..1) to a 0..1 glow level; normal speech lands around 0.4-0.9."""
     import math
-    if rms <= 1e-5:
+    if not math.isfinite(rms) or rms <= 1e-5:
         return 0.0
     db = 20 * math.log10(rms)          # quiet room ~ -60 dB, speech ~ -30..-15 dB
     return max(0.0, min(1.0, (db + 50) / 35))
@@ -246,26 +289,36 @@ class Tray:
             pass
 
     def set(self, state):
+        """Record the new state; the single animator thread does all drawing (no start/stop races)."""
         self.state = state
         try:
             if self.icon:
                 self.icon.title = tray_tooltip(state, self.app.args.key)
-            if state in ("recording", "transcribing"):
-                if (self.icon or self.overlay) and not (self._anim and self._anim.is_alive()):
-                    self._anim = threading.Thread(target=self._animate, daemon=True)
-                    self._anim.start()
-            else:
-                if self.icon:
-                    self.icon.icon = self.frames.image(state)
-                if self.overlay:
-                    self.overlay.hide()
         except Exception:
             pass
+        if self._anim is None and (self.icon or self.overlay):
+            self._anim = threading.Thread(target=self._animate, daemon=True)
+            self._anim.start()
 
     def _animate(self):
-        frame, shown = 0, 0.0
-        while self.state in ("recording", "transcribing"):
-            if self.state == "recording":
+        frame, shown, drawn_idle = 0, 0.0, None
+        while not self.app.quit_event.is_set():
+            state = self.state
+            if state not in ("recording", "transcribing"):
+                if drawn_idle != state:
+                    try:
+                        if self.icon:
+                            self.icon.icon = self.frames.image(state)
+                        if self.overlay:
+                            self.overlay.hide()
+                        drawn_idle = state
+                    except Exception:
+                        pass
+                frame, shown = 0, 0.0
+                time.sleep(0.03)
+                continue
+            drawn_idle = None
+            if state == "recording":
                 shown += (self.level - shown) * (0.6 if self.level > shown else 0.25)  # fast attack, slow decay
                 kind = "speaking"
             else:
@@ -279,13 +332,6 @@ class Tray:
                 pass
             frame += 1
             time.sleep(1 / self.FPS)
-        try:
-            if self.icon:
-                self.icon.icon = self.frames.image(self.state)
-            if self.overlay:
-                self.overlay.hide()
-        except Exception:
-            pass
 
     def toggle_pause(self, *_):
         self.app.paused = not self.app.paused
@@ -353,7 +399,7 @@ def list_mics():
     for i, d in enumerate(sd.query_devices()):
         if d["max_input_channels"] > 0:
             mark = "*" if i == default_in else " "
-            print(f"{mark} {i:>3}  {d['name']}")
+            print(f"{mark} {i:>3}  {' '.join(str(d['name']).split())}")
     print("\n* = default. Use --mic <index or name>.")
 
 
@@ -405,13 +451,17 @@ class App:
         self.args = args
         self.model = model
         self.log_path = log_path
+        self.log_to_file = bool(log_path)  # never write transcripts to a file
         self.busy = threading.Lock()
         self.paused = False
         self.quit_event = threading.Event()
         self.speech_q: "queue.Queue[str | None]" = queue.Queue()
         self.tray = Tray(self) if not (args.no_tray and args.overlay == "off") else None
         self.chimes = {"start": make_chime((660, 990), args.chime_volume, lead=0.06),
-                       "stop": make_chime((990, 660), args.chime_volume, lead=0.06)}
+                       "stop": make_chime((990, 660), args.chime_volume, lead=0.06),
+                       "blocked": make_chime((440, 330), args.chime_volume, lead=0.06)}
+        self.talk_down = False   # exact state of the configured talk key
+        self.chorded = False     # another key was pressed while the talk key was held
 
     def set_state(self, state):
         if self.tray:
@@ -426,8 +476,36 @@ class App:
         except Exception as e:
             print(f"  (chime failed: {e})", flush=True)
 
+    # --- keyboard -----------------------------------------------------------
+    def on_key_event(self, event):
+        """Global hook. Tracks the talk key by exact name (see key_matches) and notices chords."""
+        try:
+            if key_matches(self.args.key, event.name):
+                if event.event_type == "down":
+                    # A press while not busy is a new press, even if a release was lost (e.g. lock screen).
+                    if not self.talk_down or not self.busy.locked():
+                        self.talk_down = True
+                        self.chorded = False
+                        if not self.paused and not self.busy.locked():
+                            threading.Thread(target=self.talk, daemon=True).start()
+                else:
+                    self.talk_down = False
+            elif event.event_type == "down" and self.talk_down:
+                self.chorded = True  # e.g. Right Ctrl+C: a shortcut, not dictation
+        except Exception:
+            pass
+
+    @staticmethod
+    def foreground():
+        """(window handle, window class) of the focused top-level window."""
+        try:
+            import win32gui
+            hwnd = win32gui.GetForegroundWindow()
+            return hwnd, win32gui.GetClassName(hwnd) if hwnd else ""
+        except Exception:
+            return 0, ""
+
     def record_while_held(self):
-        import keyboard
         import numpy as np
         import sounddevice as sd
 
@@ -441,26 +519,37 @@ class App:
         chimed = False
         with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype="float32",
                             device=resolve_mic(self.args.mic), callback=cb):
-            while keyboard.is_pressed(self.args.key):
+            while self.talk_down and not self.chorded:
                 if not chimed and live.is_set():
                     self.chime("start")  # the mic is delivering audio: speak now
                     chimed = True
                 time.sleep(0.02)
-        return np.concatenate(chunks).flatten() if chunks else np.zeros(0, dtype="float32")
+        audio = np.concatenate(chunks).flatten() if chunks else np.zeros(0, dtype="float32")
+        return audio, chimed
 
-    def deliver(self, text):
+    def deliver(self, text, target):
+        """Paste into the window that had focus when you pressed the key, or nowhere."""
         import keyboard
         import pyperclip
 
         previous = pyperclip.paste() if self.args.restore_clipboard else None
         pyperclip.copy(text)
+        hwnd, cls = self.foreground()
+        if target[0] and hwnd != target[0]:
+            self.chime("blocked")
+            print("  Focus moved to another window while transcribing: not pasted. "
+                  "The text is on the clipboard (Ctrl+V).", flush=True)
+            return
         if self.args.type_text:
             keyboard.write(text, delay=0.005)
         else:
             keyboard.send("ctrl+v")
         if self.args.auto_send:
-            time.sleep(0.1)
-            keyboard.send("enter")
+            if is_console_class(cls):
+                print("  Auto-send skipped: this is a terminal window, so Enter could run a command.", flush=True)
+            else:
+                time.sleep(0.1)
+                keyboard.send("enter")
         if previous is not None:
             time.sleep(0.4)
             pyperclip.copy(previous)
@@ -469,10 +558,15 @@ class App:
         if not self.busy.acquire(blocking=False):
             return
         try:
+            target = self.foreground()
             self.set_state("recording")
             print("Listening... release to stop", flush=True)
-            audio = self.record_while_held()
-            self.chime("stop")
+            audio, chimed = self.record_while_held()
+            if self.chorded:
+                print("  Talk key used in a shortcut: recording discarded.", flush=True)
+                return
+            if chimed:
+                self.chime("stop")
             if len(audio) < SAMPLE_RATE * 0.4:
                 print(f"  Too short ({len(audio) / SAMPLE_RATE:.1f}s of audio), ignored.", flush=True)
                 return
@@ -482,18 +576,14 @@ class App:
             if not text:
                 print("  Heard nothing.", flush=True)
                 return
-            shown = f"{len(text)} characters" if self.args.background else text  # no transcripts in log files
+            shown = f"{len(text)} characters" if self.log_to_file else text  # no transcripts in log files
             print(f"  [{lang}, {time.time() - t:.1f}s] {shown}", flush=True)
-            self.deliver(text)
+            self.deliver(text, target)
         except Exception as e:
             print(f"  Error: {e}", flush=True)
         finally:
             self.set_state("paused" if self.paused else "ready")
             self.busy.release()
-
-    def on_talk_key(self, _event):
-        if not self.paused and not self.busy.locked():  # ignore key auto-repeat while held
-            threading.Thread(target=self.talk, daemon=True).start()
 
     def read_selection(self):
         import keyboard
@@ -504,9 +594,10 @@ class App:
         previous = pyperclip.paste()
         pyperclip.copy("")
         keyboard.send("ctrl+c")
-        time.sleep(0.25)
-        text = pyperclip.paste() or previous  # nothing selected: read the clipboard
-        if not text:
+        time.sleep(0.3)
+        text = pyperclip.paste()
+        pyperclip.copy(previous)  # leave the clipboard as it was
+        if not text.strip():
             print("Nothing selected to read.", flush=True)
             return
         print(f"Reading {len(text)} characters aloud...", flush=True)
@@ -517,19 +608,26 @@ class App:
         import win32com.client
 
         pythoncom.CoInitialize()
-        voice = win32com.client.Dispatch("SAPI.SpVoice")
-        while True:
+        voice = None
+        while not self.quit_event.is_set():
             try:
-                item = self.speech_q.get(timeout=0.1)
-            except queue.Empty:
-                pythoncom.PumpWaitingMessages()
-                continue
-            voice.Speak(item or "", 3)  # 3 = async + purge earlier speech (empty string = stop)
+                if voice is None:
+                    voice = win32com.client.Dispatch("SAPI.SpVoice")
+                try:
+                    item = self.speech_q.get(timeout=0.1)
+                except queue.Empty:
+                    pythoncom.PumpWaitingMessages()
+                    continue
+                voice.Speak(item or "", 3)  # 3 = async + purge earlier speech (empty string = stop)
+            except Exception as e:  # e.g. audio device changed: rebuild the voice and carry on
+                print(f"  (read-aloud error: {e})", flush=True)
+                voice = None
+                time.sleep(1)
 
     def run(self):
         import keyboard
 
-        keyboard.on_press_key(self.args.key, self.on_talk_key)
+        keyboard.hook(self.on_key_event)
         lines = [f"Hold {self.args.key.upper()} and speak; release to paste where your cursor is."]
         if not self.args.no_read:
             threading.Thread(target=self.speaker, daemon=True).start()
@@ -554,6 +652,23 @@ class App:
         print("Bye.", flush=True)
 
 
+def local_timestamp() -> str:
+    """Wall-clock time as Windows shows it. (Python misreads some TZ variables, e.g.
+    TZ=Europe/Amsterdam, and falls back to UTC; GetLocalTime is always right.)"""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class SYSTEMTIME(ctypes.Structure):
+            _fields_ = [(n, wintypes.WORD) for n in
+                        ("y", "mo", "dow", "d", "h", "mi", "s", "ms")]
+        st = SYSTEMTIME()
+        ctypes.windll.kernel32.GetLocalTime(ctypes.byref(st))
+        return f"{st.y:04d}-{st.mo:02d}-{st.d:02d} {st.h:02d}:{st.mi:02d}:{st.s:02d}"
+    except Exception:
+        return time.strftime("%Y-%m-%d %H:%M:%S")
+
+
 def default_log_path() -> str:
     base = os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()
     return os.path.join(base, "voice-anywhere", "voice-anywhere.log")
@@ -566,7 +681,7 @@ def redirect_output(path: str, max_bytes: int = 1_000_000):
         os.replace(path, path + ".old")
     log = open(path, "a", encoding="utf-8", buffering=1)
     sys.stdout = sys.stderr = log
-    print(f"\n=== Voice Anywhere {__version__} started {time.strftime('%Y-%m-%d %H:%M:%S')} ===")
+    print(f"\n=== Voice Anywhere {__version__} started {local_timestamp()} ===")
 
 
 def acquire_single_instance():
@@ -579,6 +694,22 @@ def acquire_single_instance():
     return handle
 
 
+def retry_delay(failures: int) -> int:
+    """Seconds to wait before restart attempt `failures` (1-based): 5, 10, 20, ... capped at 10 minutes."""
+    return int(min(600, 5 * 2 ** max(0, failures - 1)))
+
+
+def notify_failure(message: str):
+    """One visible, non-blocking message box, so a broken background copy isn't silently 'on'."""
+    def show():
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(None, message, "Voice Anywhere", 0x30 | 0x40000)  # warning, topmost
+        except Exception:
+            pass
+    threading.Thread(target=show, daemon=True).start()
+
+
 def run_background(args) -> int:
     log_path = args.log or default_log_path()
     redirect_output(log_path)
@@ -588,7 +719,9 @@ def run_background(args) -> int:
         return 0
     model = None
     failures = 0
+    notified = False
     while True:
+        started = time.time()
         try:
             if model is None:
                 model = load_model(args)
@@ -597,16 +730,41 @@ def run_background(args) -> int:
             return 0  # quit key pressed
         except Exception as e:
             import traceback
+            if time.time() - started > 300:
+                failures = 0  # it worked for a while: treat this as a fresh problem
             failures += 1
             traceback.print_exc()
-            wait = min(60, 5 * failures)
-            print(f"Error ({e}); restarting in {wait}s.", flush=True)
+            wait = retry_delay(failures)
+            print(f"Error ({e}); restart attempt {failures} in {wait}s.", flush=True)
+            if failures >= 3 and not notified:
+                notified = True
+                notify_failure(f"Voice Anywhere couldn't start and keeps retrying.\n\n{e}\n\n"
+                               f"Details: {log_path}")
             try:
                 import keyboard
                 keyboard.unhook_all()
             except Exception:
                 pass
             time.sleep(wait)
+
+
+def validate_keys(args) -> str | None:
+    """Return an error message if any configured key name is unknown (a permanent error: don't retry it)."""
+    try:
+        import keyboard
+    except ImportError:
+        return None
+    try:
+        keyboard.key_to_scan_codes(args.key)
+    except ValueError:
+        return f"Unknown --key {args.key!r}. Try 'right ctrl', 'f9', 'right alt' or 'scroll lock'."
+    for name in ("read_key", "stop_key", "quit_key"):
+        combo = getattr(args, name)
+        try:
+            keyboard.parse_hotkey(combo)
+        except ValueError:
+            return f"Unknown --{name.replace('_', '-')} {combo!r}."
+    return None
 
 
 def main(argv=None) -> int:
@@ -620,6 +778,16 @@ def main(argv=None) -> int:
         return 0
     if args.self_test:
         return self_test(args)
+    problem = validate_keys(args)
+    if problem:
+        if args.background:
+            redirect_output(args.log or default_log_path())
+            print(f"Configuration error, not starting: {problem}", flush=True)
+            notify_failure(f"Voice Anywhere can't start:\n\n{problem}")
+            time.sleep(30)  # keep the process alive long enough for the message box
+        else:
+            print(problem, file=sys.stderr)
+        return 2
     if args.background:
         return run_background(args)
     if args.log:

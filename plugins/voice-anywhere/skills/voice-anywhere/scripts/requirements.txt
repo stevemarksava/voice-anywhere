@@ -1,8 +1,10 @@
-faster-whisper>=1.1
-sounddevice>=0.5
-numpy>=1.24
-keyboard>=0.13.5
-pyperclip>=1.9
-pywin32>=306
-pystray>=0.19
-pillow>=10.0
+# Exact versions that passed the squad's tests (2026-11-05, Python 3.14 on Windows 11).
+# Pinned on purpose: a surprise upstream release can't change what you install.
+faster-whisper==1.2.1
+sounddevice==0.5.6
+numpy==2.5.4
+keyboard==0.13.5
+pyperclip==1.11.0
+pywin32==312
+pystray==0.19.5
+pillow==13.0.0

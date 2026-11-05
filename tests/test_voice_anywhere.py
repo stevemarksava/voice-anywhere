@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from types import SimpleNamespace
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "plugins", "voice-anywhere",
@@ -38,6 +39,95 @@ class ParserTests(unittest.TestCase):
         self.assertGreaterEqual(a.threads, 1)
         self.assertLessEqual(a.threads, 8)
 
+
+class SquadFixTests(unittest.TestCase):
+    """Regression tests for the squad review findings (see .squad/reviews/2026-11-05-*.md)."""
+
+    def test_k01_right_ctrl_does_not_match_left_ctrl(self):
+        # The keyboard library names Left Ctrl events 'ctrl' and Right Ctrl events 'right ctrl'.
+        self.assertTrue(va.key_matches("right ctrl", "right ctrl"))
+        self.assertTrue(va.key_matches("Right  Ctrl", "right ctrl"))
+        self.assertFalse(va.key_matches("right ctrl", "ctrl"))
+        self.assertFalse(va.key_matches("right ctrl", "left ctrl"))
+        self.assertFalse(va.key_matches("right ctrl", ""))
+        self.assertFalse(va.key_matches("right ctrl", None))
+        self.assertTrue(va.key_matches("f9", "F9"))
+        self.assertFalse(va.key_matches("f9", "f10"))
+        self.assertTrue(va.key_matches("left ctrl", "ctrl"))
+
+    def test_k01_hook_ignores_left_ctrl_and_cancels_chords(self):
+        app = va.App.__new__(va.App)
+        app.args = va.build_parser().parse_args([])
+        app.talk_down, app.chorded, app.paused = False, False, True  # paused: don't start threads
+        app.busy = __import__("threading").Lock()
+        ev = lambda t, n: SimpleNamespace(event_type=t, name=n)
+        app.on_key_event(ev("down", "ctrl"))
+        self.assertFalse(app.talk_down, "Left Ctrl must not start dictation")
+        app.on_key_event(ev("down", "right ctrl"))
+        self.assertTrue(app.talk_down)
+        app.on_key_event(ev("down", "right ctrl"))  # auto-repeat
+        self.assertFalse(app.chorded)
+        app.on_key_event(ev("down", "c"))  # Right Ctrl+C
+        self.assertTrue(app.chorded, "a shortcut with the talk key must cancel the recording")
+        app.on_key_event(ev("up", "right ctrl"))
+        self.assertFalse(app.talk_down)
+
+    def test_r1_lost_release_does_not_block_next_press(self):
+        app = va.App.__new__(va.App)
+        app.args = va.build_parser().parse_args([])
+        app.talk_down, app.chorded, app.paused = True, True, True  # stale state: release was never seen
+        app.busy = __import__("threading").Lock()
+        app.on_key_event(SimpleNamespace(event_type="down", name="right ctrl"))
+        self.assertTrue(app.talk_down)
+        self.assertFalse(app.chorded, "a fresh press must reset the shortcut flag")
+
+    def test_k02_console_windows_never_auto_send(self):
+        self.assertTrue(va.is_console_class("ConsoleWindowClass"))
+        self.assertTrue(va.is_console_class("CASCADIA_HOSTING_WINDOW_CLASS"))
+        self.assertFalse(va.is_console_class("Chrome_WidgetWin_1"))
+        self.assertFalse(va.is_console_class(""))
+        self.assertFalse(va.is_console_class(None))
+
+    def test_v1d4_ranges_validated(self):
+        p = va.build_parser()
+        for bad in (["--threads", "0"], ["--threads", "65"], ["--chime-volume", "9"], ["--chime-volume", "-1"],
+                    ["--overlay-size", "-5"], ["--overlay-size", "5000"], ["--threads", "abc"]):
+            with self.assertRaises(SystemExit, msg=bad):
+                with open(os.devnull, "w") as null, redirect_stderr(null):
+                    p.parse_args(bad)
+        a = p.parse_args(["--threads", "1", "--chime-volume", "0", "--overlay-size", "64"])
+        self.assertEqual((a.threads, a.chime_volume, a.overlay_size), (1, 0.0, 64))
+
+    def test_v1d8_voice_level_non_finite(self):
+        self.assertEqual(va.voice_level(float("nan")), 0.0)
+        self.assertEqual(va.voice_level(float("inf")), 0.0)
+        self.assertEqual(va.voice_level(-0.5), 0.0)
+
+    def test_v1d13_snake_case_stays_readable(self):
+        self.assertEqual(va.clean_for_speech("call my_var_name now"), "call my var name now")
+        self.assertEqual(va.clean_for_speech("_italic_ and __bold__"), "italic and bold")
+
+    def test_k09_retry_backoff(self):
+        self.assertEqual([va.retry_delay(n) for n in (1, 2, 3, 4)], [5, 10, 20, 40])
+        self.assertEqual(va.retry_delay(50), 600)
+        self.assertEqual(va.retry_delay(0), 5)
+
+    def test_v1d3_bad_key_names_fail_fast(self):
+        try:
+            import keyboard  # noqa: F401
+        except ImportError:
+            self.skipTest("keyboard not installed")
+        p = va.build_parser()
+        self.assertIsNone(va.validate_keys(p.parse_args([])))
+        self.assertIn("--key", va.validate_keys(p.parse_args(["--key", "notakey"])))
+        self.assertIn("--read-key", va.validate_keys(p.parse_args(["--read-key", "ctrl+alt+nonsense"])))
+
+    def test_v2d4_local_timestamp_format(self):
+        import re
+        self.assertRegex(va.local_timestamp(), r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$")
+
+
+class ParserOptionTests(unittest.TestCase):
     def test_options(self):
         a = va.build_parser().parse_args(
             ["--key", "f9", "--model", "small", "--language", "de", "--vocab", "Avanade, Fabric",

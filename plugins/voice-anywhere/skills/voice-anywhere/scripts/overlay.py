@@ -173,6 +173,10 @@ class Overlay:
                     visible = True
             time.sleep(1 / 60)
         self.u.DestroyWindow(self.hwnd)
+        if self._dib:  # free the cached bitmap and memory DC
+            self.g.DeleteObject(self._dib[3])
+            self.g.DeleteDC(self._dib[2])
+            self._dib = None
 
     def _setup(self):
         self.u, self.g, self.k = _api()

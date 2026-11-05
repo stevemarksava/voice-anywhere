@@ -78,3 +78,16 @@ Result: DELTA PASS
 - Steve's instance, shortcuts and registry untouched in this check (read-only plus unit tests). No commit and no push.
 
 Verdict: approved for push, covering the working copy as of this delta check.
+
+
+## Delta re-check (0.2.1 packaging)
+Date: 2026-11-05
+Result: DELTA PASS
+
+- (a) Schema: the new `plugins/voice-anywhere/plugin.json` validates against the Agent Plugins 1.0.0 schema (fetched from agent-plugins.org; checked with jsonschema, Draft 2020-12, in a throwaway venv, not Steve's). 0 errors. A negative control (bad name plus an extra property) gave 2 errors, so the check is real. Keys used: `$schema`, `name`, `version`, `description`, `author{name,url}`, `homepage`, `repository`, `license`, `keywords`, all allowed. `name` is `voice-anywhere`, which matches the pattern.
+- (b) Version: 0.2.1 in all four places (marketplace.json, `.claude-plugin/plugin.json`, the new `plugin.json`, `__version__`). `--version` prints `voice-anywhere 0.2.1`. Both existing JSON files parse. No stale 0.2.0 is left in product files; only historical review text mentions it.
+- (c) README: the change adds the note that other `SKILL.md`-reading tools (Gemini CLI `~/.gemini/skills/`, Cursor, Codex) work by copying, and the managed-laptop paragraph. The enterprise note matches the failure Steve saw. I did not install it in Gemini CLI, Cursor or Codex, so the Gemini path and "works the same way" are unverified; the wording is hedged ("Other tools that read SKILL.md skills"). Info only.
+- (d) Nothing else changed: `git diff` is exactly 4 files, 6 lines (the marketplace.json and plugin.json version strings, the `__version__` string, and 2 README lines), plus the new plugin.json. 24/24 unit tests OK on the venv python.
+- Steve's instance untouched (PIDs 33816/11404 unchanged). Throwaway venv deleted. No commit and no push.
+
+Verdict: approved for push, covering the working copy as of this delta check.

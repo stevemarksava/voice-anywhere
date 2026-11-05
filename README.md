@@ -97,7 +97,9 @@ copilot plugin marketplace add stevemarksava/voice-anywhere
 copilot plugin install voice-anywhere@voice-anywhere
 ```
 
-**Any agent, by copying:** copy `plugins/voice-anywhere/skills/voice-anywhere/` to `.github/skills/` or `.claude/skills/` (in a project), or to `~/.claude/skills/`. Then ask your agent to *"set up Voice Anywhere for me"*.
+**Any agent, by copying:** copy `plugins/voice-anywhere/skills/voice-anywhere/` to `.github/skills/` or `.claude/skills/` (in a project), or to `~/.claude/skills/`. Then ask your agent to *"set up Voice Anywhere for me"*. Other tools that read `SKILL.md` skills work the same way: Gemini CLI (`~/.gemini/skills/`), Cursor, and OpenAI Codex.
+
+**On a company-managed laptop:** your organisation may only allow plugins from approved marketplaces, and then `marketplace add` fails with "blocked by enterprise policy". Use the copy method above, or ask your admin to add `stevemarksava/voice-anywhere` to the allowed sources.
 
 ## Use
 

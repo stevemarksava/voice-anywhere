@@ -19,7 +19,7 @@ import tempfile
 import threading
 import time
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 SAMPLE_RATE = 16000
 
 

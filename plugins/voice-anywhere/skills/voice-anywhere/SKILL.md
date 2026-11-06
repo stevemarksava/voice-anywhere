@@ -103,5 +103,5 @@ Pass them on the command line, or bake them in with `install.ps1 -Arguments '...
 - Transcription runs locally. Neither audio nor text is sent anywhere.
 - Log files (background or `--log`) record timings and lengths only, never what was said.
 - It sets one HKCU registry value (`IsPromoted` under `Control Panel\NotifyIconSettings`) to pin the tray icon; `-Uninstall` removes that entry.
-- The only network call is the one-time model download.
+- Network access happens only at install (PyPI packages) and the first time a model is used (one download per model from Hugging Face). Once the model is on disk it loads offline with no network calls.
 - The transcript goes to the clipboard (and stays there unless `--restore-clipboard` is set), so clipboard history or sync tools may keep it.

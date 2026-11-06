@@ -20,6 +20,25 @@ It's also an [Agent Skill](https://agentskills.io): give it to Claude Code, GitH
 - **Easier on your hands.** It helps with RSI or when you're simply tired of typing. It can also read text aloud.
 - **You stay in control.** It never presses Enter for you unless you ask it to, so you always read before you send.
 
+## Why not just use Win+H?
+
+Windows already has voice input, and for many people it's the right choice. A fair comparison, based on Microsoft's own documentation (links below):
+
+| | **Windows voice typing (Win+H)** | **Windows Voice Access** | **Voice Anywhere** |
+|---|---|---|---|
+| Where speech is recognised | **Online**: Azure Speech services, internet required | On your device, works offline | On your device (Whisper), works offline |
+| How you use it | Toggle: it listens until you say "stop listening" or click | Listens while on (with sleep and mic-off modes); you control the whole PC by voice | **Push-to-talk**: records only while you hold the key |
+| Text appears | Live, as you speak | Live, as you speak | All at once after you let go (about 1–2 s per sentence) |
+| Voice commands ("delete that", "press Enter") | Yes | Yes, plus full PC control | No, it's dictation only |
+| Languages | 46 listed by Microsoft (counting regional variants) | See Microsoft's list | Whisper's ~99 (quality varies by language), auto-detected for each recording |
+| Names and jargon | Auto-punctuation; Fluid dictation corrects grammar on Copilot+ PCs | "Add to vocabulary" lets you add your own words | `--vocab "Avanade, Kubernetes, Fabric"` to steer recognition |
+| Install and approval | Built in, nothing to install, so usually easier to get approved | Built in (Windows 11 22H2+) | Python install; the global keyboard hook may be flagged by EDR |
+| Set up by your AI assistant | No | No | Yes: it's an Agent Skill for Copilot and Claude |
+
+**Use Win+H** if cloud recognition is fine for what you dictate, you want words to appear live, or you're on a locked-down work laptop. **Use Voice Access** if you want to run the whole PC by voice. **Use Voice Anywhere** if you want recognition that never leaves your machine, a mic that's only open while you hold a key, many languages and your own jargon, or your AI assistant to set it up and tune it for you.
+
+Sources: [Use voice typing](https://support.microsoft.com/en-us/accessibility/windows/use-voice-typing-to-talk-instead-of-type-on-your-pc) ("Voice typing uses online speech recognition, which is powered by Azure Speech services") and [Get started with voice access](https://support.microsoft.com/en-us/accessibility/windows/voice-access/get-started-with-voice-access) ("…without an internet connection"). Checked 5 Nov 2026.
+
 ## Tested by the squad
 
 Voice Anywhere was reviewed by Superteam, Steve's AI agent squad, before this release, and the reports are in the repo:
@@ -187,12 +206,12 @@ Speed below was measured on one machine (a 24-thread laptop CPU, a 7-second sent
 - Your microphone audio is captured **only while the key is held**, kept in memory and never written to disk. (The `--self-test` makes a short computer-voice clip in your temp folder and deletes it straight away; it's not your voice.)
 - Transcription is fully local. **No audio or text is sent anywhere.**
 - Log files record timings and lengths only, **never what you said**, in every mode.
-- The only network access is the one-time model download from Hugging Face (`Systran/faster-whisper-*`). If your network blocks it, set `HF_ENDPOINT` to an internal mirror.
+- The only network access is when you install (Python packages from PyPI) and the first time a speech model is used (it is downloaded once from Hugging Face, `Systran/faster-whisper-*`; a different `--model` needs its own download). Once a model is on your disk, the app loads it from there and makes no network calls at all; the squad verified this with a socket-level check. If your network blocks Hugging Face, set `HF_ENDPOINT` to an internal mirror.
 - It uses a global keyboard hook (the [`keyboard`](https://github.com/boppreh/keyboard) package) to detect the talk key. It acts only on the configured keys; while the talk key is held it also notices whether any other key goes down (to cancel shortcuts), but it never records or stores which key.
 - Text is only pasted into the window you were in when you pressed the key. `--auto-send` never presses Enter in a standalone terminal window, where that could run a command. Terminals built into editors (such as VS Code's) can't be told apart from the editor, so don't use `--auto-send` there.
 - The transcript is placed on the clipboard, so clipboard history or sync tools may keep it. Use `--restore-clipboard` to limit this.
 - To pin its tray icon to the taskbar, it sets one value (`IsPromoted`) under `HKCU\Control Panel\NotifyIconSettings`. `-Uninstall` removes its whole entry there.
-- Dependencies are pinned to the exact versions the squad tested. The `keyboard` package is no longer actively maintained (last release 2021); it works on current Windows, but it's the part to watch.
+- Dependencies are pinned to the exact versions the squad tested. The `keyboard` package is no longer actively maintained (last release 2020); it works on current Windows, but it's the part to watch.
 
 **On a managed work laptop:** a global keyboard hook, clipboard automation and a background Python process together look a lot like a keylogger to endpoint-security tools (Microsoft Defender for Endpoint, CrowdStrike and others). Your security tooling may flag or block it, and that's expected. The code is short and readable, so check it, or ask your IT team before installing it on a corporate device.
 

@@ -122,6 +122,45 @@ class SquadFixTests(unittest.TestCase):
         self.assertIn("--key", va.validate_keys(p.parse_args(["--key", "notakey"])))
         self.assertIn("--read-key", va.validate_keys(p.parse_args(["--read-key", "ctrl+alt+nonsense"])))
 
+    def test_vf_model_loads_offline_first(self):
+        """Vera final gate: once cached, loading the model must not touch the network."""
+        import types
+        calls = []
+
+        class FakeModel:
+            def __init__(self, name, **kw):
+                calls.append(kw.get("local_files_only", False))
+                if kw.get("local_files_only") and fake_cached is False:
+                    raise OSError("not cached")
+
+            def transcribe(self, *a, **k):
+                return iter([]), None
+
+        fake = types.ModuleType("faster_whisper")
+        fake.WhisperModel = FakeModel
+        args = va.build_parser().parse_args([])
+        saved = sys.modules.get("faster_whisper")
+        sys.modules["faster_whisper"] = fake
+        try:
+            if not HAVE_NUMPY:
+                self.skipTest("numpy not installed")
+            with open(os.devnull, "w") as null:
+                from contextlib import redirect_stdout
+                fake_cached = True
+                with redirect_stdout(null):
+                    va.load_model(args)
+                self.assertEqual(calls, [True], "cached model: one offline load, no download attempt")
+                calls.clear()
+                fake_cached = False
+                with redirect_stdout(null):
+                    va.load_model(args)
+                self.assertEqual(calls, [True, False], "not cached: offline attempt, then one download")
+        finally:
+            if saved is not None:
+                sys.modules["faster_whisper"] = saved
+            else:
+                sys.modules.pop("faster_whisper", None)
+
     def test_v2d4_local_timestamp_format(self):
         import re
         self.assertRegex(va.local_timestamp(), r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$")

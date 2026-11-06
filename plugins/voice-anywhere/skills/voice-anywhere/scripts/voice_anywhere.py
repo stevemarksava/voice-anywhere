@@ -19,7 +19,7 @@ import tempfile
 import threading
 import time
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 SAMPLE_RATE = 16000
 
 
@@ -366,10 +366,16 @@ def load_model(args):
     from faster_whisper import WhisperModel
     import numpy as np
 
-    print(f"Loading Whisper '{args.model}' model (first run downloads it once)...", flush=True)
+    print(f"Loading Whisper '{args.model}' model...", flush=True)
     t = time.time()
     compute = "int8" if args.device == "cpu" else "default"
-    model = WhisperModel(args.model, device=args.device, compute_type=compute, cpu_threads=args.threads)
+    try:
+        # Offline first: once the model is cached, no network call is made at all.
+        model = WhisperModel(args.model, device=args.device, compute_type=compute,
+                             cpu_threads=args.threads, local_files_only=True)
+    except Exception:
+        print("Model not cached yet: downloading it once from Hugging Face...", flush=True)
+        model = WhisperModel(args.model, device=args.device, compute_type=compute, cpu_threads=args.threads)
     list(model.transcribe(np.zeros(SAMPLE_RATE, dtype="float32"), beam_size=1)[0])  # warm-up
     print(f"Model ready in {time.time() - t:.1f}s.", flush=True)
     return model

@@ -121,3 +121,118 @@ Checked against voice-anywhere 0.2.1 (0a5562e, which is also origin/main and tag
 - Steve's instance untouched (PIDs 33816/11404 unchanged). No commits or pushes in either repo. Temp files in vera-rt deleted.
 
 Verdict: A PASS (approved to commit and push, with the GIF committed alongside the README). B PASS (content accurate and installable at the pinned commit).
+
+
+## Final gate (Win+H comparison, HVE Core contribution, outbound texts)
+
+Vera, 5 Nov 2026 23:xx. Evidence only. No commits, pushes or edits besides this section. Steve's running process and browser untouched. I did NOT run the HVE Quick Start installer: it stops the copy running from %LOCALAPPDATA%\voice-anywhere, which is Steve's live instance. I checked its pieces statically instead (see B).
+
+### A. README "Why not just use Win+H?" (uncommitted): FAIL, 1 required fix + 4 small ones
+
+Verified against the fetched Microsoft pages and the code:
+- Win+H: online, "powered by Azure Speech services", internet required: TRUE. Stops on the "Stop listening" command or the mic button: TRUE. Voice commands ("delete that", "select that", press Enter): TRUE. Auto-punctuation is a setting: TRUE. Fluid dictation is Copilot+ only: TRUE (also English only, on-device SLM). 46 languages: TRUE, I counted 46 bullets, but they are locale entries (en-US, en-GB, fr-CA and so on), not 46 distinct languages.
+- Voice Access: Windows 11 22H2+, works without an internet connection, controls the PC by voice: TRUE.
+- Voice Anywhere: push-to-talk, paste after release, no voice-command parser (grep found none), `--vocab` is passed as Whisper `initial_prompt`, `--language` defaults to auto-detect, Agent Skill (SKILL.md present): TRUE. Whisper ~99 languages: the OpenAI README does not state a number, but `tokenizer.py` lists 99 in the standard model, and "quality varies" is stated. Acceptable.
+
+Required fix:
+1. README.md:34, Voice Anywhere is not unique on vocabulary and the Voice Access cell is false. The Microsoft page documents "Add to vocabulary" (voice command "Add to vocabulary") for Voice Access.
+   Old: `| Built-in vocabulary |`
+   New: `| "Add to vocabulary" lets you add your own words |`
+   Also, Win+H is not shown as having any custom vocabulary. That is fair, because the page lists none, but the intro sentence of "Use Voice Anywhere if ... your own jargon" must not imply Voice Access cannot do it.
+
+Small fixes (unfair, overclaimed or unverified):
+2. README.md:35 overclaim. Old: `already approved by IT`. New: `built in, so usually easier to get approved` (IT approval is not guaranteed).
+3. README.md:30 simplification. Voice Access has listening, sleep and mic-off states (Alt+Shift+B and Alt+Shift+C). Old: `Always listening; you control the whole PC by voice`. New: `Listens continuously while on (can be put to sleep or muted); you control the whole PC by voice`.
+4. README.md:33. Old: `46 listed by Microsoft`. New: `46 listed by Microsoft (counting regional variants)`. Old: `auto-detected per sentence`. New: `auto-detected for each recording` (the code detects once per transcribe call).
+5. README.md:31, "Text appears: Live, as you speak" for Win+H and Voice Access. The Voice Access page documents real-time transcription feedback. The Win+H page I fetched does not say "live" in text, so it is true in practice but not sourced. Either soften or accept. Not blocking.
+6. README.md:33, Voice Access language cell: "See Microsoft's list" has no link. Optional: add the link.
+7. README.md:209 (existing text, not part of the delta): "The only network access is the one-time model download". See B1, same inaccuracy. Fix together.
+8. README.md:214 (existing): the `keyboard` "last release 2021". PyPI shows the last release is 0.13.5 on 23 Mar 2020. Old: `last release 2021`. New: `last release 2020`.
+
+### B. HVE Core contribution (d934bdb, fdda91a): FAIL, content fixes needed (structure and validators PASS)
+
+Validator results (in the clone, re-run now):
+- `npm run validate:skills`: PASS (90 skills, 0 errors, 0 warnings).
+- `npm run plugin:validate`: PASS (manifest in sync; 87 skills).
+- `npm run docs:generate:check`: PASS (0 create, 0 update, 0 remove; 206 unchanged).
+- cspell on the 8 changed files: PASS (0 issues).
+- Extra: `lint:frontmatter` PASS, `lint:md` PASS (0 issues), `lint:tables` PASS, `lint:artifact-portability` PASS, `lint:asset-docs` PASS (0 errors; 46 warnings, none mentioning voice-anywhere). `docs:test` could not run (jest is not installed in docs/docusaurus in this clone). That is an environment gap, not a finding. The pr.md Testing list does not claim it.
+
+Guide compliance (published skills and ai-artifacts-common pages): PASS.
+- Frontmatter: name matches the directory, description is a single sentence with no attribution suffix, valid optional fields, metadata keys are recognised ones.
+- Required sections present: H1, Overview, Prerequisites (## with ### Windows and ### macOS and Linux), Quick Start, Troubleshooting.
+- XML block `example-install-pinned` is a unique, matching pair on its own lines, with the fence inside. No attribution footer in SKILL.md.
+- Paths are skill-root-relative; the portability lint passes. SECURITY.md is required for runtimes and is present. The footer in SECURITY.md is allowed (the rule covers SKILL.md only).
+- RFC 2119: SKILL.md:28 "Prefer ..." and the Overview's mixed imperatives are lowercase but acceptable. Optional polish: "Prefer" → "SHOULD prefer".
+
+Factual checks that PASS: tag/commit pin; the v0.2.1 file tree; installer switches `-Startup -SelfTest -Arguments -Uninstall`; the `cd plugins\voice-anywhere\skills\voice-anywhere` path exists at that commit; Python 3.12+ check in `install.ps1`; 0.4 s minimum; Ctrl+Alt+R/S/Q; `--threads` 1–64 and default half the cores capped at 8; `--mic --list-mics --type --auto-send --restore-clipboard`; terminal skip for auto-send; `IsPromoted` under HKCU; single-instance mutex and restart backoff; log with lengths only; audio in memory only; the self-test clip is deleted (`os.remove`); the Win+H and Voice Access statements in SKILL.md:28-32 and issue.md match the Microsoft pages; MIT licence, "Copyright (c) 2026 Avanade Inc."; the anonymous raw LICENSE fetch at the pin returns 200.
+
+Required fixes:
+B1. "Only network call is a one-time model download" is false in three ways:
+   (a) The installer runs `pip install -r requirements.txt`, which contacts PyPI, and the Quick Start does `git clone` from GitHub.
+   (b) `WhisperModel(...)` calls `huggingface_hub.snapshot_download(..., local_files_only=False)` on every start (faster_whisper 1.2.1 utils.py:116), and the script never sets HF_HUB_OFFLINE. So each start sends a metadata/update check to huggingface.co, not only the first. No audio or text is sent.
+   Files and lines:
+   - SKILL.md:7 (`compatibility`): `the only network call is a one-time speech-model download from Hugging Face` → `at run time the only network access is the speech-model download and Hugging Face's cache/update check when the model loads; install also contacts PyPI and GitHub`.
+   - SKILL.md:153-155 (Privacy): `The only network access is the one-time speech-model download from Hugging Face` → `No audio or text is sent anywhere. Network access is limited to: GitHub and PyPI at install time, and Hugging Face for the speech model (downloaded once, with a metadata check each time the model loads)`.
+   - SECURITY.md:46 `after the one-time model download, the tool makes no network calls` → `at run time the only network access is Hugging Face model-metadata checks; no audio or text is sent`.
+   - SECURITY.md:55 (posture table, Network egress): `One-time faster-whisper model download from Hugging Face over TLS; none afterwards` → `PyPI and GitHub at install; Hugging Face over TLS for the model (download once, update check on each load)`.
+   - SECURITY.md:91 (accDescr): `a one-time model download is the only external call` → `model download and update checks are the only external calls at run time`.
+   - SECURITY.md:152 and :106 (ADV-b / diagram "one-time download"): change to "download and update check".
+   - issue.md Requirements bullet `the only network call is the one-time model download` → same fix. pr.md "one-time model download" mentions (Files-changed SECURITY.md line and the Security Considerations bullet) → "model download".
+   - SECURITY.md B4 omits the PyPI dependency chain (8 pinned packages, no hashes). Add a row: `Pinned PyPI dependencies installed without hash checking | Low | Med | Low | Accepted`. Otherwise the supply-chain bucket misleads by leaving out the larger attack surface. The ADV-c row and the `G-*` gap table also need a `G-SUP-2` for this.
+   - docs/reference/skills/experimental/voice-anywhere.md, the SKILL.md description and the reference-page overview say "speech-to-text running offline". That is defensible: transcription is local. Leave it, or say "on-device".
+B2. `keyboard` "last release 2021" is wrong; PyPI shows 0.13.5 on 23 Mar 2020.
+   - SKILL.md:180: `last release 2021` → `last release 2020`.
+   - SECURITY.md:297: `last release 2021` → `last release 2020`.
+   (The same error exists in upstream README.md:214, fix per A8. Fixing it only in HVE would leave the two out of step, but HVE must be right.)
+B3. issue.md Purpose: `speaking is roughly 3x faster than typing` is unsourced. Delete it: `because speaking is roughly 3x faster than typing for rich prompts, and because` → `because dictating long prompts is easier than typing them, and because`.
+B4. SECURITY.md:309 and the STRIDE framing. The model is honest that it models the upstream tool; that is fine, and registration in security-model.md is accurate. The "Tampering"/"Repudiation" cells are weak but not false ("cannot attribute content to a user" at :167 is a non-sequitur; consider deleting it). Not blocking.
+B5. Not blocking, but Steve should decide: both commits carry the author email `s.marks@avanade.com`, which will be public in the PR. All text files are clean otherwise. No `s.marks`, `C:\Users`, `scab1`, local paths, `.squad` paths, client names, or Accenture/EME/FDE references. `Avanade` appears only as the copyright holder and in the example vocabulary string (reference page and SKILL.md), which is fine. If he wants a neutral email, rewrite the author before pushing.
+B6. Quick Start works as written, statically verified: pin and path exist, the switches exist, and Steve's own `copilot plugin install` of the same tag works. It was not executed (would stop his live instance). Caveat: the pinned `requirements.txt` was tested on Python 3.14 per its header; SKILL.md says 3.12+. The installer enforces ≥3.12, but it was tested on 3.14 only. Add `(tested on 3.14)` to the Prerequisites bullet, or soften.
+
+### C. Outbound texts (sections 1 and 4): PASS
+
+- SHA: `refs/tags/v0.2.1` on origin is an annotated tag object a35331f; its peeled commit is `0a5562e7597a5c6c6b990a8e3a3a6890533aeead`. Matches section 1. Origin `main` is 0dd14f9 (the local HEAD), so the tag and plugin path are reachable.
+- Section 1: the plugin path `plugins/voice-anywhere`, version 0.2.1, MIT, author, homepage and keywords match plugin.json at the pin. The "reports are in .squad/reviews/" claim is TRUE at the pin. "Copilot CLI marketplace install verified" is TRUE (see below). "vally lint passes": NOT verifiable here (no vally on this machine). Either run it before sending or drop that clause. Also, "nothing leaves the machine" matches plugin.json wording, but see B1: model update checks are made. It is true for audio and text, so add "your voice and text" if you want to be strict.
+- Section 4: `copilot plugin marketplace add stevemarksava/voice-anywhere` returned "already registered" (idempotent; this is the expected message when it is already added). `copilot plugin install voice-anywhere@voice-anywhere` returned "installed successfully. Installed 1 skill." Both work as written. "Defender may flag it (keyboard hook)" is consistent with the README. "Claude Code's enterprise policy blocks outside marketplaces" is an environment claim I cannot verify from public evidence; it is Steve's own statement, so I did not rule on it.
+
+### Verdict
+- A: FAIL until fix 1 (Voice Access vocabulary cell) is applied. Fixes 2-4 and 8 strongly recommended.
+- B: FAIL until B1 (network claims) and B2 (keyboard year) are applied. B3 required (unsourced figure). Validators all PASS; structure and guide compliance PASS.
+- C: PASS. Optional: run vally or drop the clause.
+
+
+## Delta (0.2.2 offline-first)
+
+Vera, 6 Nov 2026. I ran everything independently in separate python processes using the existing venv. I did not touch Steve's running instance or his browser. I did not commit or push. The scratch folder `.vera-tmp` is deleted; `git status` shows only the 8 expected modified files.
+
+### (a) Zero-network claim: reproduced, with one wording caveat
+- Spy: patched `socket.getaddrinfo`, `gethostbyname(_ex)`, `socket.socket.connect` and `connect_ex`. Then I imported every runtime dependency (`sounddevice, pystray, win32api, win32clipboard, win32event, pyperclip, keyboard, PIL, numpy, huggingface_hub, ctranslate2, faster_whisper`), plus `voice_anywhere` 0.2.2. Then I ran the real `load_model()` (base, cached) and one VAD transcription of silence.
+  - After imports: `[]`. After load and transcribe: `network lookups: []`. Zero DNS lookups and zero non-loopback connects.
+- Positive control (proves the spy catches it): the 0.2.1 behaviour (`WhisperModel("base")` without `local_files_only`) produced `lookups: ['huggingface.co']`. So B1 was real and 0.2.2 fixes it.
+- No telemetry from pystray, pywin32, sounddevice, ctranslate2 or huggingface_hub showed up. The spy covers Python sockets for the whole process, including imports. It would not see a raw socket opened inside a native extension. I have no evidence of any, and the dependencies are not known to do this, so I do not rate it a blocker.
+- Not covered by the spy: read-aloud (Windows SAPI voices, local). The installer and `git clone` do use the network (PyPI, GitHub).
+
+### (b) Fallback path: works
+- Exception raised by `local_files_only=True` on an uncached model (checked with `large-v2`): `huggingface_hub.errors.LocalEntryNotFoundError`, a subclass of `FileNotFoundError` and `OSError`. `except Exception` catches it. No hang, no partial state.
+- Real test through `load_model()` with `--model tiny` (not previously cached; it added ~75 MB to Steve's shared HF cache, as agreed):
+  - Run 1 (uncached): loaded successfully, lookups to `huggingface.co` as expected (download).
+  - Run 2 (now cached): `network lookups: []`.
+- Behaviour note, not a defect: the broad `except Exception` also retries the online path after any other offline-load failure (for example a corrupt cache). Any real error (such as CUDA unavailable) re-raises from the second call, so it is not hidden.
+
+### (c) Tests, versions, README
+- Tests: venv 25/25 OK; system python 25 tests OK (1 skip). The new test checks the cached case (one offline load) and the uncached case (offline attempt, then one download). Its fake raises `OSError`, which matches the real exception's parent class.
+- Version 0.2.2 appears in all four places (`marketplace.json`, both `plugin.json`, `voice_anywhere.py`). No stale 0.2.1 outside .squad and tests.
+- Win+H table: all A fixes applied correctly (Add to vocabulary, sleep/mic-off, regional variants, per recording, approval wording). `keyboard` is now "2020" (matches PyPI 23 Mar 2020).
+- Nothing else changed beyond the load_model message text ("first run downloads it once" removed from the console print, correct) and the Win+H table, README Privacy, SKILL.md Privacy and tests.
+
+### Required wording fix (README.md:209 and SKILL.md:106)
+The claim "Network access happens only during installation ... After that ... no network calls at all" is true for a cached model, but not exact as written: the model downloads on the first run (or at `-SelfTest`), and a different `--model` (for example `small`) needs its own first-time download later. Replace:
+- README.md:209, old: `Network access happens only during installation: Python packages from PyPI, and the speech model from Hugging Face (` + "`Systran/faster-whisper-*`" + `) the first time it runs. After that it loads the model from your disk and makes no network calls at all; the squad verified this.`
+  new: `The only network access is when you install (Python packages from PyPI) and the first time a speech model is used (it is downloaded once from Hugging Face, ` + "`Systran/faster-whisper-*`" + `; a different --model needs its own download). Once a model is on your disk, the app loads it from there and makes no network calls at all; the squad verified this with a socket-level check.`
+- SKILL.md:106, old: `Network access happens only at install time (PyPI packages, and the one-time model download from Hugging Face). After that the model loads from disk with no network calls.`
+  new: `Network access happens only at install (PyPI packages) and the first time a model is used (one download per model from Hugging Face). Once the model is on disk it loads offline with no network calls.`
+
+Optional: CONTRIBUTING.md:17 "no cloud calls beyond the one-time model download" is still accurate; leave it.
+
+### Verdict: PASS, conditional on the wording fix above (docs only; no code change needed). After that edit the delta is cleared to commit as v0.2.2.

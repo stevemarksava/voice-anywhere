@@ -29,7 +29,8 @@ except ImportError:
 class ParserTests(unittest.TestCase):
     def test_defaults(self):
         a = va.build_parser().parse_args([])
-        self.assertEqual(a.key, "right ctrl")
+        self.assertIsNone(a.key, "no --key: resolved later from the saved choice or the default")
+        self.assertEqual(va.resolve_key(a.key, {}), ("right ctrl", "default"))
         self.assertEqual(a.model, "base")
         self.assertIsNone(a.language)
         self.assertFalse(a.auto_send)
@@ -42,6 +43,20 @@ class ParserTests(unittest.TestCase):
 
 class SquadFixTests(unittest.TestCase):
     """Regression tests for the squad review findings (see .squad/reviews/2026-11-05-*.md)."""
+
+    @staticmethod
+    def make_app(key="right ctrl", paused=True):
+        app = va.App.__new__(va.App)
+        app.args = va.build_parser().parse_args(["--key", key, "--no-beep"])
+        app.talk_down, app.chorded, app.paused = False, False, paused  # paused: don't start threads
+        app.busy = __import__("threading").Lock()
+        app.choosing_until, app.config_file, app.key_source, app.tray = 0.0, None, "default", None
+        app.hold_until_release = False
+        app.bg = lambda fn, *a: fn(*a)  # run "background" work inline so tests are deterministic
+        app.told = []
+        app.tell = app.told.append
+        app.set_state = lambda s: None
+        return app
 
     def test_k01_right_ctrl_does_not_match_left_ctrl(self):
         # The keyboard library names Left Ctrl events 'ctrl' and Right Ctrl events 'right ctrl'.
@@ -56,10 +71,7 @@ class SquadFixTests(unittest.TestCase):
         self.assertTrue(va.key_matches("left ctrl", "ctrl"))
 
     def test_k01_hook_ignores_left_ctrl_and_cancels_chords(self):
-        app = va.App.__new__(va.App)
-        app.args = va.build_parser().parse_args([])
-        app.talk_down, app.chorded, app.paused = False, False, True  # paused: don't start threads
-        app.busy = __import__("threading").Lock()
+        app = self.make_app()
         ev = lambda t, n: SimpleNamespace(event_type=t, name=n)
         app.on_key_event(ev("down", "ctrl"))
         self.assertFalse(app.talk_down, "Left Ctrl must not start dictation")
@@ -73,13 +85,116 @@ class SquadFixTests(unittest.TestCase):
         self.assertFalse(app.talk_down)
 
     def test_r1_lost_release_does_not_block_next_press(self):
-        app = va.App.__new__(va.App)
-        app.args = va.build_parser().parse_args([])
-        app.talk_down, app.chorded, app.paused = True, True, True  # stale state: release was never seen
-        app.busy = __import__("threading").Lock()
+        app = self.make_app()
+        app.talk_down, app.chorded = True, True  # stale state: release was never seen
         app.on_key_event(SimpleNamespace(event_type="down", name="right ctrl"))
         self.assertTrue(app.talk_down)
         self.assertFalse(app.chorded, "a fresh press must reset the shortcut flag")
+
+
+class TalkKeyChoiceTests(unittest.TestCase):
+    """v0.2.3: laptops without Right Ctrl can pick their own talk key."""
+
+    ev = staticmethod(lambda t, n: SimpleNamespace(event_type=t, name=n))
+
+    def test_allowed_and_refused_keys(self):
+        for ok in ("caps lock", "f8", "right alt", "alt gr", "right shift", "scroll lock", "insert", "menu", "f23"):
+            self.assertIsNone(va.talk_key_problem(ok), ok)
+        for bad in ("a", "7", ";", "space", "enter", "tab", "backspace", "esc", "left", "page up",
+                    "ctrl", "shift", "alt", "windows", "", "unknown"):
+            self.assertIsNotNone(va.talk_key_problem(bad), bad)
+
+    def test_only_non_modifiers_are_swallowed(self):
+        self.assertTrue(va.suppresses_key("caps lock"))
+        self.assertTrue(va.suppresses_key("F8"))
+        self.assertFalse(va.suppresses_key("right ctrl"))
+        self.assertFalse(va.suppresses_key("right alt"))
+
+    def test_hook_return_values(self):
+        app = SquadFixTests.make_app("caps lock", paused=False)
+        app.busy.acquire()  # pretend a recording is running so no thread is started
+        try:
+            self.assertFalse(app.on_key_event(self.ev("down", "caps lock")), "caps lock must not toggle caps")
+            self.assertFalse(app.on_key_event(self.ev("up", "caps lock")))
+            self.assertTrue(app.on_key_event(self.ev("down", "x")), "other keys always pass through")
+        finally:
+            app.busy.release()
+        app.paused = True
+        self.assertTrue(app.on_key_event(self.ev("down", "caps lock")), "paused: caps lock works normally")
+        rc = SquadFixTests.make_app("right ctrl", paused=True)
+        self.assertTrue(rc.on_key_event(self.ev("down", "right ctrl")), "modifier talk keys are never swallowed")
+
+    def test_hook_never_raises_or_blocks_on_error(self):
+        app = SquadFixTests.make_app()
+        self.assertTrue(app.on_key_event(object()), "a broken event must be let through, not block typing")
+
+    def test_choose_key_flow(self):
+        import time as _time
+        app = SquadFixTests.make_app()
+        app.config_file = os.path.join(tempfile.mkdtemp(), "config.json")
+        app.chime = lambda kind, blocking=False: None
+        app.choosing_until = _time.time() + 10
+        # Copilot key sends Windows+Shift+F23: the modifiers are skipped, F23 is taken.
+        self.assertTrue(app.on_key_event(self.ev("down", "left windows")))
+        self.assertTrue(app.on_key_event(self.ev("down", "shift")))
+        self.assertFalse(app.on_key_event(self.ev("down", "f23")), "the chosen key isn't passed to the app")
+        self.assertEqual(app.args.key, "f23")
+        self.assertEqual(va.load_config(app.config_file), {"key": "f23"})
+        # A letter is refused and nothing changes.
+        app.choosing_until = _time.time() + 10
+        app.on_key_event(self.ev("down", "q"))
+        self.assertEqual(app.args.key, "f23")
+        self.assertEqual(app.choosing_until, 0.0)
+        # Esc cancels.
+        app.choosing_until = _time.time() + 10
+        app.on_key_event(self.ev("down", "esc"))
+        self.assertEqual(app.args.key, "f23")
+        # Timeout: the next key is treated normally, not as a choice.
+        app.choosing_until = _time.time() - 1
+        app.on_key_event(self.ev("down", "caps lock"))
+        self.assertEqual(app.args.key, "f23")
+
+    def test_chosen_key_held_down_does_not_start_recording(self):
+        """Vera 0.2.3 fix 1: auto-repeat of the key you just chose must not start dictation."""
+        import time as _time
+        app = SquadFixTests.make_app(paused=False)
+        app.config_file = os.path.join(tempfile.mkdtemp(), "config.json")
+        app.chime = lambda kind, blocking=False: None
+        starts = []
+        app.talk = lambda: starts.append(1)
+        app.choosing_until = _time.time() + 10
+        self.assertFalse(app.on_key_event(self.ev("down", "caps lock")))  # chosen
+        for _ in range(5):
+            self.assertFalse(app.on_key_event(self.ev("down", "caps lock")), "auto-repeat is still swallowed")
+        _time.sleep(0.1)
+        self.assertEqual(starts, [], "holding the just-chosen key must not start a recording")
+        self.assertFalse(app.on_key_event(self.ev("up", "caps lock")))
+        self.assertFalse(app.hold_until_release)
+        app.on_key_event(self.ev("down", "caps lock"))  # a real, new press
+        _time.sleep(0.1)
+        self.assertEqual(starts, [1])
+
+    def test_releases_pass_while_choosing(self):
+        """Vera 0.2.3 fix 3: a key-up during choosing (e.g. Enter from the tray menu) is never swallowed."""
+        import time as _time
+        app = SquadFixTests.make_app()
+        app.choosing_until = _time.time() + 10
+        self.assertTrue(app.on_key_event(self.ev("up", "enter")))
+        self.assertGreater(app.choosing_until, 0, "a release doesn't end choosing")
+
+    def test_resolve_key_precedence_and_config_roundtrip(self):
+        path = os.path.join(tempfile.mkdtemp(), "sub", "config.json")
+        self.assertEqual(va.load_config(path), {})
+        va.save_config({"key": "caps lock"}, path)
+        va.save_config({"other": 1}, path)
+        cfg = va.load_config(path)
+        self.assertEqual(cfg, {"key": "caps lock", "other": 1})
+        self.assertEqual(va.resolve_key(None, cfg), ("caps lock", "saved choice"))
+        self.assertEqual(va.resolve_key("f9", cfg), ("f9", "command line"))
+        self.assertEqual(va.resolve_key(None, {"key": "  "}), ("right ctrl", "default"))
+        with open(path, "w") as f:
+            f.write("not json")
+        self.assertEqual(va.load_config(path), {})
 
     def test_k02_console_windows_never_auto_send(self):
         self.assertTrue(va.is_console_class("ConsoleWindowClass"))

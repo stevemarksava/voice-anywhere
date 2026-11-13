@@ -145,7 +145,18 @@ It glows and pulses with your voice, and its colours dim when you go quiet. It d
 | **Steady glow** | Transcribing. Your text arrives in a second or two. |
 | **Grey** | Paused, or starting up. |
 
-Right-click the knot to pause or resume, toggle auto-send, open the log or quit. Hover over it to see the current state. On Windows 11 the knot pins itself to the visible taskbar from the second start. If it's hidden under the **^** arrow, drag it out or turn it on in *Settings > Personalisation > Taskbar > Other system tray icons*.
+Right-click the knot to change the talk key, pause or resume, toggle auto-send, open the log or quit. Hover over it to see the current state. On Windows 11 the knot pins itself to the visible taskbar from the second start. If it's hidden under the **^** arrow, drag it out or turn it on in *Settings > Personalisation > Taskbar > Other system tray icons*.
+
+### No Right Ctrl on your laptop? Pick your own key
+
+Many laptops have no Right Ctrl; often the Copilot key sits there instead. Right-click the knot, choose **Change talk key…**, and press the key you want to hold. It takes effect straight away and is remembered. (In a console: `voice_anywhere.py --choose-key`.)
+
+- **Good choices:** Caps Lock, Right Shift, an F-key, Insert, Scroll Lock, the Menu key. Right Alt usually works too; on keyboard layouts where it acts as AltGr (German, Dutch and others) it's untested and may behave differently.
+- **Caps Lock and F-keys are swallowed while they're the talk key**, so holding Caps Lock doesn't switch capitals on and F8 doesn't trigger the app's own F8. Pause Voice Anywhere from the tray and they work normally again. Modifier keys (Ctrl, Alt, Shift) are never swallowed, so shortcuts keep working.
+- **Refused:** letters, digits, Space, Enter, Tab, Backspace, Delete, Esc, arrow keys, Home/End/Page Up/Page Down, both Windows keys, and the left Ctrl/Alt/Shift keys. These are used too often.
+- **The Copilot key** sends Windows + Shift + F23. When you press it while choosing, Voice Anywhere takes the F23. Whether Windows still opens Copilot too depends on your laptop, so try it and choose another key if it does.
+
+A `--key` on the command line (or baked into the launcher with `-Arguments`) wins over the saved choice.
 
 ### Keys
 
@@ -153,7 +164,7 @@ Start **Voice Anywhere** if it isn't already running (with `-Startup` it always 
 
 | Do this | What happens |
 |---|---|
-| Click into any text box, **hold Right Ctrl**, wait for the chime, speak, release | Text is pasted at the cursor and also left on the clipboard. |
+| Click into any text box, **hold your talk key** (Right Ctrl unless you chose another), wait for the chime, speak, release | Text is pasted at the cursor and also left on the clipboard. |
 | Select text, press **Ctrl + Alt + R** | It's read aloud. Markdown and links are tidied up first, and your clipboard is left as it was. If nothing is selected, nothing is read. |
 | **Ctrl + Alt + S** | Stop reading |
 | **Ctrl + Alt + Q** | Quit |
@@ -162,12 +173,13 @@ Tips:
 
 - **Hold the key for the whole sentence.** Pauses are fine.
 - **Teach it your words** with `--vocab "Avanade, Copilot, Fabric, Kubernetes"`.
-- **Pick the right key.** Avoid combinations that other apps already use (e.g. Ctrl+Alt+Space opens some AI assistants). A single key such as Right Ctrl, F9 or Scroll Lock works best.
+- **Pick the right key.** Avoid combinations that other apps already use (e.g. Ctrl+Alt+Space opens some AI assistants). A single key works best; see *Pick your own key* above.
 
 ### Options
 
 ```text
---key KEY            key to hold while talking (default: right ctrl; matched exactly)
+--key KEY            key to hold while talking (default: your saved choice, else right ctrl; matched exactly)
+--choose-key         press the key you want to use; it's saved for next time
 --model NAME         tiny | base | small | medium | large-v3 (default: base)
 --language CODE      en, de, nl, fr, ... (default: auto-detect)
 --vocab "A, B, C"    names and jargon to help recognition
@@ -219,7 +231,8 @@ Speed below was measured on one machine (a 24-thread laptop CPU, a 7-second sent
 
 | Problem | Fix |
 |---|---|
-| Another app's pop-up flickers while you talk | Your talk key clashes with its shortcut. Use `--key f9` (or another single key). |
+| Another app's pop-up flickers while you talk | Your talk key clashes with its shortcut. Right-click the knot → **Change talk key…** and pick another single key. |
+| My laptop has no Right Ctrl | Right-click the knot → **Change talk key…** and press Caps Lock, Right Shift or an F-key. See *Pick your own key*. |
 | Nothing gets pasted | Click into a text box first. If you switched windows while it was transcribing, it deliberately doesn't paste (low chime); press Ctrl+V where you want the text. Admin windows ignore input from normal apps, so run Voice Anywhere as admin for those. Use `--type` for apps that block paste. |
 | Slow | Use `--model base` or `tiny`, and try `--threads 4` or `8`. |
 | Wrong words | Use `--model small`, `--language en`, `--vocab "..."` and a headset mic. |

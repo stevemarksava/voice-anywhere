@@ -236,3 +236,83 @@ The claim "Network access happens only during installation ... After that ... no
 Optional: CONTRIBUTING.md:17 "no cloud calls beyond the one-time model download" is still accurate; leave it.
 
 ### Verdict: PASS, conditional on the wording fix above (docs only; no code change needed). After that edit the delta is cleared to commit as v0.2.2.
+
+
+## Final gate re-check (HVE Core B)
+
+Vera, 6 Nov 2026. Reviewed the staged changes (`git diff HEAD`) on top of d934bdb/fdda91a, plus issue.md and pr.md. No commits or pushes; Steve's instance untouched.
+
+### Pin and Quick Start: PASS
+- `v0.2.2` on origin is an annotated tag (530d951) peeling to `73fb38dced4ed54ce99f9da5ea963a6d17f26356`. Origin `main` is the same commit, so the pinned checkout is reachable after a plain `git clone`.
+- At 73fb38d: `plugins/voice-anywhere/skills/voice-anywhere/scripts/install.ps1` exists. `install.ps1` and `requirements.txt` are byte-identical to 0.2.1 (empty diff), so the switches (`-Startup -SelfTest -Arguments -Uninstall`) and the Python 3.12+ check still hold. `voice_anywhere.py` is `__version__ = "0.2.2"` with `local_files_only=True` in `load_model`.
+- Quick Start static check passes (path, commit, switches). It was not executed, since the installer would stop Steve's live copy.
+
+### Claims vs 73fb38d: PASS
+- Network wording (SKILL.md frontmatter and Privacy bullet, SECURITY.md exec summary, posture table, data-flow diagram, boundary table, ADV-b, B4, issue.md): matches the code and my own 0.2.2 socket-spy result (zero lookups once cached; a download only on first use per model; install uses GitHub and PyPI). The "no audio or text ever sent" claim is consistent.
+- G-SUP-2 is accurate: `requirements.txt` has exact `==` pins and no `--hash` entries. "Open residual gaps: 6 registered" matches the 6 table rows (EOP-1, SUP-1, SUP-2, INF-1, TAM-1, TLS-1). The B4 risk-table row and the security-model.md row include the PyPI hash-pinning gap.
+- `keyboard` "last release 2020" now correct in SKILL.md and SECURITY.md (G-TAM-1). The 3x claim is gone from issue.md. The Win+H and Voice Access statements are unchanged and still match Microsoft's pages.
+
+### Stale references: PASS
+- No `0.2.1`, `0a5562e`, `2021` or `3x` remain in SKILL.md, SECURITY.md, the reference page, security-model.md, issue.md or pr.md.
+
+### Validators (re-run, in the clone): PASS
+- `validate:skills`: 90 skills, 0 errors, 0 warnings.
+- `plugin:validate`: in sync, 87 skills.
+- `docs:generate:check`: 0 create, 0 update, 0 remove; 206 unchanged.
+- cspell on the 8 changed repo files: 0 issues. Extras: `lint:frontmatter`, `lint:md`, `lint:tables`, `lint:artifact-portability` and `lint:asset-docs` all pass (0 errors).
+- cspell on the drafts: 5 hits only in issue.md and pr.md (`recognises`, `stevemarksava`, `LOCALAPPDATA`, `pythonw`). The drafts are not committed files and the repo does not spell-check PR bodies, so this is informational only.
+
+### Private data: PASS, one open item
+- No username, `C:\Users`, `AppData`, `Temp\`, `.squad`/`.claude` paths, client names, or EME/FDE/Accenture references in the five files. `Avanade` appears only as the copyright holder and in the example vocabulary string.
+- Still open (Steve's decision, unchanged): both commits carry author/committer email `s.marks@avanade.com`, and it becomes public on push.
+
+### Required fixes (small, drafts only; they are not files in the PR diff)
+1. pr.md:40 (SECURITY.md bullet in "Files changed"): `one-time model download` → `install-time GitHub/PyPI fetches, per-model download on first use`.
+2. pr.md:124-125 (Security Considerations): `one-time model download` → `install-time GitHub/PyPI fetches, per-model download on first use`. This also fits the new G-SUP-2 gap, which the PR text should mention: add `PyPI dependencies are version-pinned but not hash-pinned (G-SUP-2)` to that list.
+Optional (not blocking): the data-flow diagram draws the GitHub and PyPI edges into the `STT` node, which is cosmetic. Python 3.12+ is enforced by the installer but the pins were tested on 3.14 (add `(pins tested on 3.14)` to Prerequisites if desired).
+
+### Verdict: PASS for the repo files (SKILL.md, SECURITY.md, reference page, security-model.md): cleared to commit. The PR draft needs the two stale-wording edits above before it is posted. The email question remains for Steve.
+
+## Delta (0.2.3 talk-key chooser)
+
+**Verdict: FAIL, narrowly.** Normal typing is safe. Two functional defects and one hook-thread risk need small fixes before tagging. Reviewer: VERA, 2026-11-13. Evidence is the 31 unit tests plus a live synthetic-key run (keybd_event, separate process, temp config, a second probe process hooked *behind* ours to see what really reaches other apps).
+
+### Can this ever break normal typing? No (verified)
+- **Library semantics** (`keyboard/__init__.py`): `hook(suppress=True)` appends to `blocking_hooks`; `direct_callback` returns False (event dropped via `return -1` in `_winkeyboard`) only if some blocking hook returns falsy. A swallowed event is also never put on the queue or in `_pressed_events`. Exceptions in the library's own handler fall through to `CallNextHookEx`, so they fail open.
+- **Every path in `_handle_key`** returns True/False explicitly; none returns None. `on_key_event` wraps it and returns True on any exception. Paths: choosing (swallow the first *down* only, see below); choosing timeout (expiry is only noticed on the next key event, which then falls through and passes); talk key (`paused or not suppresses_key`, so paused = pass); everything else = True. `args.key=None` cannot occur after `main()` resolves it; if it did, `key_matches(None, ..)` simply never matches and the key passes.
+- **Live:** with Caps Lock as talk key, Caps never toggled (GetKeyState 0 before and after) and never reached the probe. F24 and Ctrl/Alt (plain keys and modifiers) all reached the probe. `ctrl+alt+f24` add_hotkey fired (1). Paused: Caps passes (toggles), no talk. Timeout: next key (F24) passed and "No key pressed" was told. Esc cancelled and the talk key was unchanged. Config went only to the temp file; Steve's real config.json does not exist and was not touched. Caps was restored OFF (it was briefly toggled on by my own paused-state test; restored and re-checked 0).
+- **Re-entrancy:** `keyboard.send/write` set `_listener.is_replaying`, and `direct_callback` returns True for those events *before* the blocking hooks run. So our own paste/Enter/Ctrl+C never reach `on_key_event` and can't be swallowed or set `chorded` (live: F8 held as talk key, `send("ctrl+v")` left `chorded=False`; a synthetic `send("f8")` did not start a talk). `write()` uses VK_PACKET, which the library ignores. Hotkeys via add_hotkey (non-blocking handlers) are unaffected.
+- **Hook latency:** ordinary keys are microseconds. The choosing path measured 11-15 ms (no tray; includes save_config, sd.play, first-use import). See fix 2.
+
+### Required fixes
+1. **Spurious recording right after choosing** (`App.finish_choosing` / `_handle_key`). Live: pick Caps Lock and keep it held; the OS autorepeat *down* events that follow match the new talk key, `talk_down` was reset to False, so `talk()` starts (chime, mic open) before the user has even released. Fix: in `finish_choosing` set `self.talk_down = True` (not False) and `self.chorded = True`, so autorepeats are not a new press. The first real *up* clears `talk_down` (the up branch already does), and `chorded` is reset on the next fresh down. Add a unit test: `finish_choosing("caps lock")` then a second "down" event must not call `talk`.
+2. **Don't do I/O on the hook thread** (`_handle_key`, `finish_choosing`, expiry branch). `save_config` (file + Defender), `tray.notify` (Shell_NotifyIcon, which can stall if Explorer is busy), `sd.play` and `set_state` all run inside the LL hook callback. It's once per choice and measured ~15 ms, so it's *normally* fine, but an Explorer stall or AV scan beyond the ~1 s LowLevelHooksTimeout lets Windows silently drop the hook (the app would look alive with a dead talk key, and the "swallowed" key state could be left half-applied). Fix: in `_handle_key` do only the cheap state change (`choosing_until = 0`, pick the name, return False), then `threading.Thread(target=self.finish_choosing, args=(name,), daemon=True).start()`. Do the same for the expiry `self.tell(...)`. Keep `self.args.key = name` assignment inside the thread but set `talk_down/chorded` (fix 1) synchronously in the hook so there is no window.
+3. **Key-up swallowed while choosing** (`_handle_key`, choosing branch: `return False  # the key you pick...`). It returns False for *up* events too. If the first event after clicking "Change talk key…" is the release of a key that was already down (e.g. Enter used to activate the menu from the keyboard, or Ctrl), the up is swallowed and the OS keeps that key logically down. Esc has the mirror issue (down swallowed, up leaks, harmless). Fix: `return not down` there (swallow only the down). Same in `choose_key_cli.hook` (return `event.event_type != "down"`). Add to `test_hook_return_values`.
+
+### Observations, no change required
+- AltGr layouts (German etc.): AltGr emits a fake left-Ctrl first, so choosing it may be refused as "Ctrl". I couldn't test on such a layout; the README lists "Right Alt / AltGr" as good. Either test it or soften that wording.
+- A swallowed non-modifier talk key also swallows with modifiers held (e.g. talk key F4 kills Alt+F4). README says F-keys are swallowed, so documented in spirit.
+- `--choose-key` and `choose_key_cli`: swallows keys only until the first down (then unhooks); fine.
+- Talk key is not checked against the configured read/stop/quit hotkeys. Only matters if someone picks an F-key used in those.
+
+### Other checks
+- Unit tests: **31/31 pass** on the venv python (OK) and **31 run, OK, 1 skipped** on system python.
+- Docs: README section, table rows, tips, troubleshooting, SKILL.md and `--help` match the code (modifiers never swallowed; paused restores key; `--key` beats saved choice; saved key validated at start with fallback to Right Ctrl). Copilot-key wording is honestly hedged (F23 is taken; Copilot may still open). Nit: README "Refused" omits the Right Windows key, which the code also refuses (`REJECTED_KEYS`).
+- Versions: 0.2.3 in script, marketplace.json and both plugin.json files.
+- Uninstall: `install.ps1 -Uninstall` removes `%LOCALAPPDATA%\voice-anywhere` recursively (line 72), which contains `config.json`. Confirmed by reading; not executed.
+
+**Re-test on fix:** rerun the live Caps Lock choose-and-hold scenario (expect 0 talks until a deliberate second press), and confirm the probe sees an Enter-up after a keyboard-activated menu.
+
+## Delta re-check (0.2.3 fixes)
+
+**Verdict: PASS.** All three required fixes verified by code and live (synthetic keybd_event, separate process, temp config, cross-process probe behind our hook). Tests: 33/33 on the venv python; system python OK, 1 skipped. Caps Lock confirmed OFF at the end; Steve's real config.json and instance untouched.
+
+1. **Held key after choosing: fixed.** Chose Caps Lock and held it with 6 autorepeat downs over ~0.7 s, then released: 0 recordings started, caps state unchanged (0), `hold_until_release` cleared by the up, key saved. A fresh press then started exactly 1 recording, caps still 0. Code: `hold_until_release` is checked first in the talk-key branch; downs are ignored but still swallowed for non-modifiers; the next talk-key up clears it. A lost up can't wedge it, because any later up of that key clears it.
+2. **Slow work off the hook thread: fixed.** `finish_choosing` only changes state and calls `bg(...)`; `save_config`, `set_state`, `tell` and chime live in `_accepted`/`_refused` on daemon threads, as does the expiry message. Measured hook time max **0.87 ms**, including the choosing event (was 11-15 ms). Timeout message was still delivered.
+3. **Releases pass while choosing: fixed.** A key held before choosing and released during it reached the probe (up f24 seen), and choosing stayed active. `choose_key_cli.hook` has the same `!= "down"` pass.
+
+**(b) No falsy return for non-talk keys.** Over the whole run the only falsy returns were `caps lock` down/up (talk key), `esc` down (cancel) and the chosen key's down. x, F24, Ctrl, Alt and releases all returned True and reached the probe. A refused key (`x`) is swallowed on the down only; its up passed. `ctrl+alt+f24` hotkey fired. Code path review: every branch returns an explicit bool; the exception wrapper returns True.
+
+**(c) Docs.** README and SKILL.md match the code: refused list now includes Home/End/Page Up/Page Down and both Windows keys (matches `REJECTED_KEYS`); AltGr caveat present in both. Nit only: the README troubleshooting row (line ~235) still says "Caps Lock, Right Alt or an F-key" without the AltGr caveat; harmless, since the section it links to carries it.
+
+No further required fixes.

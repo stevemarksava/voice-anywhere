@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "voice-anywhere",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Hold a key, speak, release: your words are typed wherever the cursor is, in any app on Windows. Local faster-whisper transcription (nothing leaves the machine), read-aloud, always-on mode with a Trinity-knot tray indicator. Your AI assistant installs and tunes it for you.",
   "author": {
     "name": "Steve Marks (Avanade)",

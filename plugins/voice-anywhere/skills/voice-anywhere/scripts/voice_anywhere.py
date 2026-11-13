@@ -19,7 +19,7 @@ import tempfile
 import threading
 import time
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"
 SAMPLE_RATE = 16000
 
 
@@ -50,9 +50,12 @@ def build_parser() -> argparse.ArgumentParser:
         description="Hold a key, speak, release: your words are typed wherever your cursor is. "
                     "Transcription runs locally; audio never leaves your machine.",
     )
-    p.add_argument("--key", default="right ctrl",
-                   help="key to hold while talking (default: 'right ctrl'; e.g. 'f9', 'right alt', 'scroll lock'). "
+    p.add_argument("--key", default=None,
+                   help="key to hold while talking (default: the key you chose with 'Change talk key' in the tray "
+                        "menu or --choose-key, else 'right ctrl'; e.g. 'f9', 'right alt', 'caps lock'). "
                         "Matched exactly: 'right ctrl' does not react to the left Ctrl key")
+    p.add_argument("--choose-key", action="store_true",
+                   help="press the key you want to hold to talk; it's saved and used from then on")
     p.add_argument("--model", default="base",
                    help="Whisper model: tiny, base, small, medium, large-v3 (default: base; bigger = more accurate, slower)")
     p.add_argument("--language", default=None,
@@ -124,6 +127,91 @@ def key_matches(configured: str, event_name: str) -> bool:
     if want == got:
         return True
     return want.startswith("left ") and want[5:] == got  # 'left ctrl' is reported as plain 'ctrl'
+
+
+DEFAULT_KEY = "right ctrl"
+
+# Modifier keys are never swallowed, so shortcuts that use them keep working.
+MODIFIER_KEYS = {"ctrl", "left ctrl", "right ctrl", "shift", "left shift", "right shift", "alt", "left alt",
+                 "right alt", "alt gr", "windows", "left windows", "right windows"}
+
+# Keys that can't be the talk key: they're used constantly, move the cursor, or are Esc (cancel).
+REJECTED_KEYS = {"space", "enter", "tab", "backspace", "delete", "esc", "escape", "up", "down", "left", "right",
+                 "home", "end", "page up", "page down", "ctrl", "left ctrl", "shift", "left shift", "alt",
+                 "left alt", "windows", "left windows", "right windows"}
+
+# While choosing, these are skipped rather than refused: the Copilot key on newer laptops sends
+# Windows+Shift+F23, so we wait for the F23 that follows.
+SKIPPED_WHILE_CHOOSING = {"windows", "left windows", "shift", "left shift"}
+
+
+def talk_key_problem(name: str) -> str | None:
+    """Why a key can't be the talk key, or None if it can."""
+    n = normalise_key(name or "")
+    if not n or n == "unknown":
+        return "That key can't be recognised. Try another one."
+    if len(n) == 1:
+        return f"'{n}' types a character, so it can't be the talk key. Try Caps Lock, Right Alt or an F-key."
+    if n in REJECTED_KEYS:
+        return f"{n.title()} is used too often to be the talk key. Try Caps Lock, Right Alt or an F-key."
+    return None
+
+
+def suppresses_key(name: str) -> bool:
+    """True if the talk key is swallowed so it doesn't reach apps (e.g. Caps Lock doesn't toggle caps)."""
+    return normalise_key(name or "") not in MODIFIER_KEYS
+
+
+def config_path() -> str:
+    base = os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()
+    return os.path.join(base, "voice-anywhere", "config.json")
+
+
+def load_config(path: str | None = None) -> dict:
+    import json
+    try:
+        with open(path or config_path(), encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_config(updates: dict, path: str | None = None) -> None:
+    import json
+    path = path or config_path()
+    data = load_config(path)
+    data.update(updates)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, path)
+
+
+def resolve_key(cli_key: str | None, config: dict) -> tuple[str, str]:
+    """(talk key, where it came from). The command line wins, then the saved choice, then the default."""
+    if cli_key:
+        return cli_key, "command line"
+    saved = config.get("key")
+    if isinstance(saved, str) and saved.strip():
+        return saved, "saved choice"
+    return DEFAULT_KEY, "default"
+
+
+def check_choice(name: str) -> str | None:
+    """Full check for a key the user pressed while choosing: allowed and known to the keyboard library."""
+    problem = talk_key_problem(name)
+    if problem:
+        return problem
+    try:
+        import keyboard
+        keyboard.key_to_scan_codes(name)
+    except ImportError:
+        pass
+    except ValueError:
+        return "That key can't be used as the talk key. Try another one."
+    return None
 
 
 CONSOLE_CLASSES = {"ConsoleWindowClass", "CASCADIA_HOSTING_WINDOW_CLASS", "mintty", "VirtualConsoleClass",
@@ -223,6 +311,7 @@ class Tray:
         self.frames = KnotFrames(64)
         menu = pystray.Menu(
             pystray.MenuItem(lambda _: f"Hold {self.app.args.key.upper()} to talk", None, enabled=False),
+            pystray.MenuItem("Change talk key…", self.change_key),
             pystray.MenuItem("Paused", self.toggle_pause, checked=lambda _: self.app.paused),
             pystray.MenuItem("Auto-send (press Enter)", self.toggle_auto_send,
                              checked=lambda _: self.app.args.auto_send),
@@ -332,6 +421,18 @@ class Tray:
                 pass
             frame += 1
             time.sleep(1 / self.FPS)
+
+    def notify(self, message, title="Voice Anywhere"):
+        """Windows notification from the tray icon; falls back to the log."""
+        print(f"  {message}", flush=True)
+        try:
+            if self.icon:
+                self.icon.notify(message, title)
+        except Exception:
+            pass
+
+    def change_key(self, *_):
+        self.app.start_choosing_key()
 
     def toggle_pause(self, *_):
         self.app.paused = not self.app.paused
@@ -468,6 +569,61 @@ class App:
                        "blocked": make_chime((440, 330), args.chime_volume, lead=0.06)}
         self.talk_down = False   # exact state of the configured talk key
         self.chorded = False     # another key was pressed while the talk key was held
+        self.choosing_until = 0.0  # while time.time() < this, the next key press becomes the talk key
+        self.hold_until_release = False  # just chosen and still held: ignore it until it's released
+        self.config_file = None    # where a chosen key is saved (None = default location)
+        self.key_source = getattr(args, "key_source", "command line")
+
+    def tell(self, message):
+        if self.tray:
+            self.tray.notify(message)
+        else:
+            print(f"  {message}", flush=True)
+
+    def start_choosing_key(self, seconds=15):
+        self.choosing_until = time.time() + seconds
+        self.tell(f"Press the key you want to hold to talk (Esc cancels, {seconds} s).")
+
+    def bg(self, fn, *a):
+        """Run slow work (file I/O, notifications, sound) off the keyboard-hook thread: Windows drops
+        a low-level hook that takes too long (~1 s)."""
+        threading.Thread(target=fn, args=a, daemon=True).start()
+
+    def finish_choosing(self, name):
+        """Handle the key pressed while choosing. Runs on the hook thread, so only state changes happen
+        here; everything slow goes to bg(). Returns True if the key was accepted."""
+        self.choosing_until = 0.0
+        if normalise_key(name) in ("esc", "escape"):
+            self.bg(self.tell, f"Cancelled. The talk key is still {self.args.key.upper()}.")
+            return False
+        problem = check_choice(name)
+        if problem:
+            self.bg(self._refused, problem)
+            return False
+        self.args.key = name
+        self.talk_down = True
+        self.chorded = False
+        self.hold_until_release = True  # the key is still held: its auto-repeat must not start a recording
+        was_cli = self.key_source == "command line"
+        self.key_source = "saved choice"
+        self.bg(self._accepted, name, was_cli)
+        return True
+
+    def _refused(self, problem):
+        self.tell(problem + " Choose 'Change talk key' again to retry.")
+        self.chime("blocked")
+
+    def _accepted(self, name, was_cli):
+        try:
+            save_config({"key": name}, self.config_file)
+            saved = " It's saved for next time."
+        except OSError as e:
+            saved = f" (Couldn't save it for next time: {e})"
+        if was_cli:
+            saved += " Note: your launcher sets --key, which wins at the next start."
+        self.set_state("paused" if self.paused else "ready")  # refresh the tooltip
+        self.tell(f"Talk key is now {name.upper()}. Hold it, wait for the chime, speak, let go.{saved}")
+        self.chime("start")
 
     def set_state(self, state):
         if self.tray:
@@ -484,22 +640,43 @@ class App:
 
     # --- keyboard -----------------------------------------------------------
     def on_key_event(self, event):
-        """Global hook. Tracks the talk key by exact name (see key_matches) and notices chords."""
+        """Global blocking hook: return True to let the key through, False to swallow it.
+        It runs for every key press system-wide, so it must stay fast and never raise."""
         try:
-            if key_matches(self.args.key, event.name):
-                if event.event_type == "down":
-                    # A press while not busy is a new press, even if a release was lost (e.g. lock screen).
-                    if not self.talk_down or not self.busy.locked():
-                        self.talk_down = True
-                        self.chorded = False
-                        if not self.paused and not self.busy.locked():
-                            threading.Thread(target=self.talk, daemon=True).start()
-                else:
-                    self.talk_down = False
-            elif event.event_type == "down" and self.talk_down:
-                self.chorded = True  # e.g. Right Ctrl+C: a shortcut, not dictation
+            return self._handle_key(event)
         except Exception:
-            pass
+            return True
+
+    def _handle_key(self, event):
+        name, down = event.name, event.event_type == "down"
+        if self.choosing_until:
+            if time.time() > self.choosing_until:
+                self.choosing_until = 0.0
+                self.bg(self.tell, f"No key pressed. The talk key is still {self.args.key.upper()}.")
+            elif normalise_key(name or "") in SKIPPED_WHILE_CHOOSING or not down:
+                return True  # let releases through, so no key is left stuck down (e.g. Enter from the menu)
+            else:
+                self.finish_choosing(name)
+                return False  # the key you pick isn't passed on to the app
+        if key_matches(self.args.key, name):
+            if self.hold_until_release:
+                if not down:
+                    self.hold_until_release = False
+                    self.talk_down = False
+            elif down:
+                # A press while not busy is a new press, even if a release was lost (e.g. lock screen).
+                if not self.talk_down or not self.busy.locked():
+                    self.talk_down = True
+                    self.chorded = False
+                    if not self.paused and not self.busy.locked():
+                        threading.Thread(target=self.talk, daemon=True).start()
+            else:
+                self.talk_down = False
+            # Swallow non-modifier talk keys (Caps Lock, F-keys) so holding them doesn't type or toggle.
+            return self.paused or not suppresses_key(self.args.key)
+        if down and self.talk_down:
+            self.chorded = True  # e.g. Right Ctrl+C: a shortcut, not dictation
+        return True
 
     @staticmethod
     def foreground():
@@ -633,7 +810,7 @@ class App:
     def run(self):
         import keyboard
 
-        keyboard.hook(self.on_key_event)
+        keyboard.hook(self.on_key_event, suppress=True)  # return value decides; only the talk key is ever swallowed
         lines = [f"Hold {self.args.key.upper()} and speak; release to paste where your cursor is."]
         if not self.args.no_read:
             threading.Thread(target=self.speaker, daemon=True).start()
@@ -760,10 +937,11 @@ def validate_keys(args) -> str | None:
         import keyboard
     except ImportError:
         return None
+    key = args.key or DEFAULT_KEY
     try:
-        keyboard.key_to_scan_codes(args.key)
+        keyboard.key_to_scan_codes(key)
     except ValueError:
-        return f"Unknown --key {args.key!r}. Try 'right ctrl', 'f9', 'right alt' or 'scroll lock'."
+        return f"Unknown --key {key!r}. Try 'right ctrl', 'f9', 'right alt' or 'caps lock', or run --choose-key."
     for name in ("read_key", "stop_key", "quit_key"):
         combo = getattr(args, name)
         try:
@@ -771,6 +949,44 @@ def validate_keys(args) -> str | None:
         except ValueError:
             return f"Unknown --{name.replace('_', '-')} {combo!r}."
     return None
+
+
+def choose_key_cli(timeout=30) -> int:
+    """Console version of 'Change talk key': press a key, it's checked and saved."""
+    import keyboard
+    result = {}
+    done = threading.Event()
+
+    def hook(event):
+        name = event.name or ""
+        if normalise_key(name) in SKIPPED_WHILE_CHOOSING or event.event_type != "down":
+            return True  # releases pass, so nothing is left stuck down
+        if not done.is_set():
+            result["name"] = name
+            done.set()
+        return False
+
+    print(f"Press the key you want to hold to talk (Esc cancels, {timeout} s)...", flush=True)
+    keyboard.hook(hook, suppress=True)
+    try:
+        got = done.wait(timeout)
+    finally:
+        keyboard.unhook_all()
+    if not got:
+        print("No key pressed; nothing changed.")
+        return 1
+    name = result["name"]
+    if normalise_key(name) in ("esc", "escape"):
+        print("Cancelled; nothing changed.")
+        return 1
+    problem = check_choice(name)
+    if problem:
+        print(problem)
+        return 2
+    save_config({"key": name})
+    print(f"Talk key saved: {name.upper()}. A running copy picks it up after a restart "
+          f"(or use 'Change talk key' in its tray menu).")
+    return 0
 
 
 def main(argv=None) -> int:
@@ -782,6 +998,13 @@ def main(argv=None) -> int:
     if args.list_mics:
         list_mics()
         return 0
+    if args.choose_key:
+        return choose_key_cli()
+    cli_key = args.key
+    args.key, args.key_source = resolve_key(cli_key, load_config())
+    if args.key_source == "saved choice" and check_choice(args.key):
+        print(f"Saved talk key {args.key!r} can't be used; falling back to {DEFAULT_KEY!r}.", flush=True)
+        args.key, args.key_source = DEFAULT_KEY, "default"
     if args.self_test:
         return self_test(args)
     problem = validate_keys(args)

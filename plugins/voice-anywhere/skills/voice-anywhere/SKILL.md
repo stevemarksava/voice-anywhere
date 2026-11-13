@@ -49,7 +49,9 @@ To check it's running, look for `pythonw.exe` with `voice_anywhere.py` in its co
   - **Steady glow:** transcribing.
   - **Grey:** paused or starting.
 
-Right-click it to pause, toggle auto-send, open the log or quit. On Windows 11 it pins itself to the visible taskbar from the second start; otherwise it's under the **^** overflow arrow.
+Right-click it to change the talk key, pause, toggle auto-send, open the log or quit. On Windows 11 it pins itself to the visible taskbar from the second start; otherwise it's under the **^** overflow arrow.
+
+**No Right Ctrl (common on laptops):** tell the user to right-click the knot, choose **Change talk key…** and press the key they want (Caps Lock, Right Shift, an F-key, Insert, Scroll Lock or Menu; Right Alt usually works but is untested on AltGr layouts). It applies immediately and is saved in `%LOCALAPPDATA%\voice-anywhere\config.json`. From a console: `voice_anywhere.py --choose-key`. Non-modifier talk keys such as Caps Lock are swallowed while they're the talk key (Caps Lock won't toggle); modifiers never are. Letters, digits, Space, Enter, Tab, Backspace, Delete, Esc, arrows, Home/End/Page Up/Page Down, both Windows keys and the left Ctrl/Alt/Shift keys are refused. A `--key` on the command line wins over the saved choice.
 
 | Action | Default key |
 |---|---|
@@ -66,7 +68,7 @@ Pass them on the command line, or bake them in with `install.ps1 -Arguments '...
 
 | Option | Use it when |
 |---|---|
-| `--key "f9"` | Right Ctrl is awkward or clashes. Use one physical key, not a combination. |
+| `--key "f9"` / `--choose-key` | Right Ctrl is missing (laptops) or clashes. Prefer the tray's **Change talk key…**. Use one physical key, not a combination. |
 | `--model small` | Accuracy matters more than speed (`tiny` < `base` < `small` < `medium` < `large-v3`). |
 | `--language en` | Auto-detect picks the wrong language on short phrases. |
 | `--vocab "Avanade, Copilot, Fabric"` | Names or jargon get misheard. Keep the list short. |
@@ -84,7 +86,7 @@ Pass them on the command line, or bake them in with `install.ps1 -Arguments '...
 
 | Symptom | Fix |
 |---|---|
-| Another app pops up or flickers while the key is held | The talk key clashes with that app's shortcut (e.g. Ctrl+Alt+Space). Choose another `--key`. |
+| Another app pops up or flickers while the key is held | The talk key clashes with that app's shortcut (e.g. Ctrl+Alt+Space). Change the talk key from the tray menu. |
 | Nothing is pasted | Click into a text box first. Elevated (admin) windows ignore input from a non-admin process, so run the launcher as admin for those. For apps that block paste, use `--type`. |
 | "Too short, ignored" | Hold the key for the whole sentence. Under 0.4 s is ignored. |
 | Slow | Try `--model base` or `tiny`. Run `--self-test` with different `--threads`. The first transcription after start is slower. |
